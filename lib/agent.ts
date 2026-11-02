@@ -15,13 +15,13 @@ export function getAvailableProviders() {
   if (process.env.NVIDIA_API_KEY) {
     providers.push({
       name: "NVIDIA",
-      model: nvidia.chat(process.env.NVIDIA_MODEL ?? "meta/llama-3.1-70b-instruct"),
+      model: nvidia.chat(process.env.NVIDIA_MODEL ?? "meta/llama-3.3-70b-instruct"),
     });
   }
   if (process.env.OPENROUTER_API_KEY) {
     providers.push({
       name: "OpenRouter",
-      model: openrouter.chat(process.env.OPENROUTER_MODEL ?? "meta-llama/llama-3.1-8b-instruct:free"),
+      model: openrouter.chat(process.env.OPENROUTER_MODEL ?? "meta-llama/llama-3.1-8b-instruct"),
     });
   }
   return providers;
