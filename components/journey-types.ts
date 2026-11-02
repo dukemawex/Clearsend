@@ -1,3 +1,4 @@
-export type Remittance = { amountSent: number; fee: number; fxRate: number; amountReceived: number; destination: string; currency: string };
-export type Flight = { id?: string; airline: string; route: string; depart: string; arrive: string; price: number | null; currency?: string; stops?: number; duration?: string; provider?: string };
+export type Remittance = { amountSent: number; fee: number; fxRate: number; amountReceived: number; destination: string; currency: string; displayStrings?: { sendAmount: string; fee: string; totalCharged: string; rate: string; receiveAmount: string } };
+export type Flight = { id?: string; airline: string; route: string; depart: string; arrive: string; price: number | null; currency?: string; stops?: number; duration?: string; provider?: string; isCheapest?: boolean };
 export type Approval = { approvalId: string; toolName: string; toolCallId: string; input: Record<string, unknown> };
+export type PayPalActivity = { id: string; timestamp: number; toolName: string; args: Record<string, unknown>; paypalId?: string; status: "pending" | "approved" | "success" | "failed"; latencyMs?: number; error?: string };

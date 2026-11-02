@@ -12,6 +12,7 @@ export type FlightOffer = {
   duration?: string;
   price: number | null;
   currency: string;
+  isCheapest?: boolean;
 };
 
 type SearchInput = { origin: string; destination: string; date?: string };
@@ -55,32 +56,138 @@ async function searchDuffel(input: SearchInput): Promise<FlightOffer[]> {
   });
 }
 
-async function rapidAirport(query: string, headers: HeadersInit) {
-  const response = await jsonFetch(`https://sky-scrapper.p.rapidapi.com/api/v1/flights/searchAirport?query=${encodeURIComponent(query)}&locale=en-US`, { headers });
-  const first = Array.isArray(response.data) ? asRecord(response.data[0]) : {};
-  return { skyId: asString(first.skyId), entityId: asString(first.entityId) };
+async function rapidAirport(query: string, headers: HeadersInit, isCityRetry = false) {
+  try {
+    const url = `https://sky-scrapper.p.rapidapi.com/api/v1/flights/searchAirport?query=${encodeURIComponent(query)}&locale=en-US`;
+    const response = await fetch(url, { headers, cache: "no-store" });
+    const body = await response.json().catch(() => ({}));
+    
+    if (!response.ok) {
+      const errorMsg = asString(asRecord(body).message, response.statusText);
+      const trimmedBody = JSON.stringify(body).slice(0, 200);
+      console.warn("rapidapi_airport_error", { query, status: response.status, error: errorMsg, body: trimmedBody });
+      throw new Error(`${response.status} ${errorMsg}`);
+    }
+    
+    const data = Array.isArray(body.data) ? body.data : [];
+    if (data.length === 0) return { skyId: "", entityId: "" };
+    
+    // Find best match by IATA code or take first result
+    const queryUpper = query.toUpperCase();
+    const bestMatch = data.find((item: unknown) => {
+      const record = asRecord(item);
+      return asString(record.skyId).toUpperCase() === queryUpper;
+    }) || data[0];
+    
+    const airport = asRecord(bestMatch);
+    const navigation = asRecord(airport.navigation);
+    const relevantFlightParams = asRecord(navigation.relevantFlightParams);
+    
+    // Check multiple possible locations for skyId and entityId
+    const skyId = asString(airport.skyId) || asString(relevantFlightParams.skyId);
+    const entityId = asString(navigation.entityId) || asString(relevantFlightParams.entityId);
+    
+    console.info("rapidapi_airport_resolved", { query, skyId, entityId });
+    return { skyId, entityId };
+  } catch (error) {
+    if (!isCityRetry) {
+      console.warn("rapidapi_airport_retry_with_city", { originalQuery: query });
+      // Retry with city name variations (e.g., "JFK" -> "New York", "LOS" -> "Lagos")
+      const cityMap: Record<string, string> = {
+        JFK: "New York",
+        LOS: "Lagos",
+        LGA: "New York",
+        EWR: "Newark",
+        LAX: "Los Angeles",
+        ORD: "Chicago",
+        LHR: "London",
+        CDG: "Paris"
+      };
+      const cityQuery = cityMap[query.toUpperCase()];
+      if (cityQuery) return rapidAirport(cityQuery, headers, true);
+    }
+    throw error;
+  }
 }
 
 async function searchRapidApi(input: SearchInput): Promise<FlightOffer[]> {
   const key = process.env.RAPIDAPI_KEY;
   if (!key) return [];
   const headers = { "x-rapidapi-key": key, "x-rapidapi-host": "sky-scrapper.p.rapidapi.com" };
-  const origin = await rapidAirport(input.origin, headers);
-  const destination = await rapidAirport(input.destination, headers);
-  if (!origin.skyId || !destination.skyId) return [];
-  const params = new URLSearchParams({ originSkyId: origin.skyId, destinationSkyId: destination.skyId, originEntityId: origin.entityId, destinationEntityId: destination.entityId, date: dateForSearch(input.date), adults: "1", currency: "USD", market: "en-US", countryCode: "US" });
-  const body = await jsonFetch(`https://sky-scrapper.p.rapidapi.com/api/v2/flights/searchFlights?${params}`, { headers });
-  const directItineraries = Array.isArray(body.data) ? body.data : [];
-  const nestedItineraries = asRecord(body.data).itineraries;
-  const itineraries: unknown[] = directItineraries.length > 0 ? directItineraries : Array.isArray(nestedItineraries) ? nestedItineraries : [];
-  return itineraries.map<FlightOffer>((raw, index) => {
-    const itinerary = asRecord(raw);
-    const leg = asRecord(Array.isArray(itinerary.legs) ? itinerary.legs[0] : undefined);
-    const segment = asRecord(Array.isArray(leg.segments) ? leg.segments[0] : undefined);
-    const carrier = asRecord(Array.isArray(segment.operatingCarrier) ? segment.operatingCarrier[0] : segment.operatingCarrier);
-    const price = asRecord(itinerary.price);
-    return { id: asString(itinerary.id, `rapid-${index}`), provider: "rapidapi", airline: asString(carrier.name, "Airline"), airlineCode: asString(carrier.displayCode), route: `${input.origin.toUpperCase()} → ${input.destination.toUpperCase()}`, origin: input.origin, destination: input.destination, depart: asString(segment.departure, "Scheduled"), arrive: asString(segment.arrival, "Scheduled"), stops: Math.max(0, asNumber(leg.stopCount)), duration: asString(leg.durationInMinutes) ? `${asString(leg.durationInMinutes)} min` : undefined, price: asNumber(price.raw, asNumber(price.amount)), currency: asString(price.currency, "USD") };
-  }).filter((offer) => offer.price !== null && offer.price > 0);
+  
+  try {
+    const origin = await rapidAirport(input.origin, headers);
+    const destination = await rapidAirport(input.destination, headers);
+    
+    if (!origin.skyId || !destination.skyId) {
+      console.warn("rapidapi_airport_resolution_failed", { origin: input.origin, destination: input.destination, originResolved: origin.skyId, destinationResolved: destination.skyId });
+      throw new Error(`Could not resolve airport codes for origin (${input.origin}) or destination (${input.destination})`);
+    }
+    
+    const params = new URLSearchParams({ 
+      originSkyId: origin.skyId, 
+      destinationSkyId: destination.skyId, 
+      originEntityId: origin.entityId, 
+      destinationEntityId: destination.entityId, 
+      date: dateForSearch(input.date), 
+      cabinClass: "economy",
+      adults: "1", 
+      currency: "USD", 
+      market: "en-US", 
+      countryCode: "US",
+      sortBy: "best"
+    });
+    
+    const url = `https://sky-scrapper.p.rapidapi.com/api/v2/flights/searchFlightsComplete?${params}`;
+    const response = await fetch(url, { headers, cache: "no-store" });
+    const body = await response.json().catch(() => ({}));
+    
+    if (!response.ok) {
+      const errorMsg = asString(asRecord(body).message, response.statusText);
+      const trimmedBody = JSON.stringify(body).slice(0, 300);
+      console.error("rapidapi_flight_search_error", { status: response.status, error: errorMsg, body: trimmedBody });
+      throw new Error(`${response.status} ${errorMsg}`);
+    }
+    
+    const data = asRecord(body.data);
+    const directItineraries = Array.isArray(body.data) ? body.data : [];
+    const nestedItineraries = asRecord(data).itineraries;
+    const itineraries: unknown[] = directItineraries.length > 0 ? directItineraries : Array.isArray(nestedItineraries) ? nestedItineraries : [];
+    
+    const offers = itineraries.map<FlightOffer>((raw, index) => {
+      const itinerary = asRecord(raw);
+      const legs = Array.isArray(itinerary.legs) ? itinerary.legs : [];
+      const leg = asRecord(legs[0]);
+      const segments = Array.isArray(leg.segments) ? leg.segments : [];
+      const segment = asRecord(segments[0]);
+      const carrier = asRecord(segment.operatingCarrier || segment.marketingCarrier);
+      const price = asRecord(itinerary.price);
+      
+      return { 
+        id: asString(itinerary.id, `rapid-${index}`), 
+        provider: "rapidapi", 
+        airline: asString(carrier.name, "Airline"), 
+        airlineCode: asString(carrier.displayCode || carrier.alternateId), 
+        route: `${input.origin.toUpperCase()} → ${input.destination.toUpperCase()}`, 
+        origin: input.origin, 
+        destination: input.destination, 
+        depart: asString(segment.departure, "Scheduled"), 
+        arrive: asString(segment.arrival, "Scheduled"), 
+        stops: Math.max(0, asNumber(leg.stopCount)), 
+        duration: asString(leg.durationInMinutes) ? `${asString(leg.durationInMinutes)} min` : undefined, 
+        price: asNumber(price.raw, asNumber(price.amount)), 
+        currency: asString(price.currency, "USD") 
+      };
+    }).filter((offer) => offer.price !== null && offer.price > 0);
+    
+    // Sort by price (cheapest first)
+    offers.sort((a, b) => (a.price ?? Infinity) - (b.price ?? Infinity));
+    
+    return offers;
+  } catch (error) {
+    console.error("rapidapi_search_failed", { origin: input.origin, destination: input.destination, error: error instanceof Error ? error.message : "unknown" });
+    throw error;
+  }
 }
 
 async function searchAviationstack(input: SearchInput): Promise<FlightOffer[]> {
@@ -112,7 +219,28 @@ export async function searchFlights(input: SearchInput) {
   const attempted: string[] = [];
   for (const [name, provider] of providers) {
     attempted.push(name);
-    try { const offers = await provider(); if (offers.length > 0) { console.info("flight_provider_served", { provider: name, count: offers.length, origin: input.origin, destination: input.destination }); return { provider: name, origin: input.origin, destination: input.destination, date: dateForSearch(input.date), options: offers }; } console.warn("flight_provider_empty", { provider: name }); } catch (error) { console.warn("flight_provider_failed", { provider: name, error: error instanceof Error ? error.message : "unknown error" }); }
+    try { 
+      const offers = await provider(); 
+      if (offers.length > 0) { 
+        // Sort by price and mark the cheapest
+        const sortedOffers = offers.sort((a, b) => {
+          if (a.price === null) return 1;
+          if (b.price === null) return -1;
+          return a.price - b.price;
+        });
+        
+        // Mark the cheapest offer
+        if (sortedOffers.length > 0 && sortedOffers[0].price !== null) {
+          sortedOffers[0].isCheapest = true;
+        }
+        
+        console.info("flight_provider_served", { provider: name, count: sortedOffers.length, origin: input.origin, destination: input.destination, cheapestPrice: sortedOffers[0].price }); 
+        return { provider: name, origin: input.origin, destination: input.destination, date: dateForSearch(input.date), options: sortedOffers }; 
+      } 
+      console.warn("flight_provider_empty", { provider: name }); 
+    } catch (error) { 
+      console.warn("flight_provider_failed", { provider: name, error: error instanceof Error ? error.message : "unknown error" }); 
+    }
   }
   throw new FlightSearchError(`No flight offers were found for ${input.origin} to ${input.destination}. Providers tried: ${attempted.join(", ")}.`, attempted);
 }
