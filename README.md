@@ -33,7 +33,11 @@ Try these in the live demo or after local setup:
 | `PAYPAL_CLIENT_ID` | PayPal sandbox app client ID | [developer.paypal.com/dashboard](https://developer.paypal.com/dashboard/) → Apps & Credentials → Sandbox → Create App |
 | `PAYPAL_CLIENT_SECRET` | PayPal sandbox app secret | Same dashboard |
 | `CLEAR_SEND_API_KEY` | Server-side auth for `/api/payouts` and `/api/orders` routes | Generate any strong random string (e.g. `openssl rand -hex 32`). **Do not commit this.** Only used when calling money routes directly (agent tools handle auth internally). |
-| `NVIDIA_API_KEY` **or** `OPENROUTER_API_KEY` | AI provider for the agent | NVIDIA: [build.nvidia.com](https://build.nvidia.com/) (free tier). OpenRouter: [openrouter.ai](https://openrouter.ai/) (free models available). Agent uses NVIDIA if set, falls back to OpenRouter. |
+| `NVIDIA_API_KEY` **or** `OPENROUTER_API_KEY` | AI provider for the agent | NVIDIA: [build.nvidia.com](https://build.nvidia.com/) (free tier). OpenRouter: [openrouter.ai](https://openrouter.ai/) (free models available). Agent tries NVIDIA first, falls back to OpenRouter if NVIDIA fails. |
+
+**Known-good models:**
+- **NVIDIA:** `meta/llama-3.1-70b-instruct` (default), `nvidia/llama-3.1-nemotron-70b-instruct`, `meta/llama-3.1-8b-instruct`
+- **OpenRouter:** `meta-llama/llama-3.1-8b-instruct:free` (default), `meta-llama/llama-3.2-3b-instruct:free`
 
 **Optional:** `DUFFEL_API_KEY`, `RAPIDAPI_KEY`, `AVIATIONSTACK_API_KEY` for flight search. Agent gracefully degrades if flight providers are unavailable.
 
@@ -90,10 +94,10 @@ Open http://localhost:3000. Flight search uses the configured worldwide provider
 | `CLEAR_SEND_API_KEY` | Server-side auth token for `/api/payouts` and `/api/orders` direct calls. Generate a strong random string. Not needed for agent tool execution (agent handles auth internally). If not set, money routes log a warning but remain unprotected. | **Recommended** |
 | `NVIDIA_API_KEY` | NVIDIA NIM API key | **Yes** (or use OpenRouter) |
 | `NVIDIA_BASE_URL` | Optional base URL; defaults to `https://integrate.api.nvidia.com/v1` | No |
-| `NVIDIA_MODEL` | Optional model; defaults to `meta/llama-3.1-405b-instruct` | No |
-| `OPENROUTER_API_KEY` | Optional fallback key from [openrouter.ai](https://openrouter.ai/) | **Yes** (if no NVIDIA) |
+| `NVIDIA_MODEL` | Optional model; defaults to `meta/llama-3.1-70b-instruct`. Other working models: `nvidia/llama-3.1-nemotron-70b-instruct`, `meta/llama-3.1-8b-instruct` | No |
+| `OPENROUTER_API_KEY` | Optional fallback key from [openrouter.ai](https://openrouter.ai/). Agent tries NVIDIA first, then falls back to OpenRouter if NVIDIA fails. | **Yes** (if no NVIDIA) |
 | `OPENROUTER_BASE_URL` | Optional base URL; defaults to `https://openrouter.ai/api/v1` | No |
-| `OPENROUTER_MODEL` | Optional fallback model; defaults to `meta-llama/llama-3.1-8b-instruct:free` | No |
+| `OPENROUTER_MODEL` | Optional fallback model; defaults to `meta-llama/llama-3.1-8b-instruct:free`. Other free models: `meta-llama/llama-3.2-3b-instruct:free` | No |
 | `DUFFEL_API_KEY` | Duffel test-mode token; primary flight provider | No |
 | `RAPIDAPI_KEY` | RapidAPI key for Sky Scrapper backup flight search | No |
 | `AVIATIONSTACK_API_KEY` | Aviationstack free-tier key for route/schedule backup | No |
