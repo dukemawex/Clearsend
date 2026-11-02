@@ -7,11 +7,13 @@ import { captureOrder, createOrder, createPayout, getOrder, getPayoutStatus } fr
 import { searchFlights } from "@/lib/flights";
 
 const nvidia = createOpenAI({ apiKey: process.env.NVIDIA_API_KEY ?? "not-configured", baseURL: process.env.NVIDIA_BASE_URL ?? "https://integrate.api.nvidia.com/v1" });
+const openrouter = createOpenAI({ apiKey: process.env.OPENROUTER_API_KEY ?? "not-configured", baseURL: process.env.OPENROUTER_BASE_URL ?? "https://openrouter.ai/api/v1", headers: { "HTTP-Referer": process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000", "X-Title": "ClearSend" } });
 const paypalToolkit = process.env.PAYPAL_CLIENT_ID && process.env.PAYPAL_CLIENT_SECRET ? new PayPalAgentToolkit({ clientId: process.env.PAYPAL_CLIENT_ID, clientSecret: process.env.PAYPAL_CLIENT_SECRET, configuration: { context: { sandbox: true }, actions: { orders: { create: true, get: true }, invoices: { create: true, get: true, list: true }, products: { create: true, list: true }, disputes: { list: true, get: true } } } }) : null;
 
 function nvidiaModel() {
-  if (!process.env.NVIDIA_API_KEY) throw new Error("NVIDIA_API_KEY is not configured. Add a valid NVIDIA NIM API key before using the ClearSend agent.");
-  return nvidia.chat(process.env.NVIDIA_MODEL ?? "nvidia/nemotron-3-ultra-550b-a55b");
+  if (process.env.NVIDIA_API_KEY) return nvidia.chat(process.env.NVIDIA_MODEL ?? "nvidia/nemotron-3-ultra-550b-a55b");
+  if (process.env.OPENROUTER_API_KEY) return openrouter.chat(process.env.OPENROUTER_MODEL ?? "openrouter/free");
+  throw new Error("No AI provider is configured. Add NVIDIA_API_KEY or OPENROUTER_API_KEY to use the ClearSend agent.");
 }
 
 export const agentTools = {

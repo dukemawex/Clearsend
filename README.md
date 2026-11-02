@@ -23,6 +23,9 @@ Open http://localhost:3000. Flight search uses the configured worldwide provider
 | `NVIDIA_API_KEY` | NVIDIA NIM API key |
 | `NVIDIA_BASE_URL` | Optional base URL; defaults to `https://integrate.api.nvidia.com/v1` |
 | `NVIDIA_MODEL` | Optional model; defaults to `nvidia/nemotron-3-ultra-550b-a55b` |
+| `OPENROUTER_API_KEY` | Optional fallback key from [openrouter.ai](https://openrouter.ai/) |
+| `OPENROUTER_BASE_URL` | Optional base URL; defaults to `https://openrouter.ai/api/v1` |
+| `OPENROUTER_MODEL` | Optional fallback model; defaults to `openrouter/free` |
 | `DUFFEL_API_KEY` | Duffel test-mode token; primary flight provider |
 | `RAPIDAPI_KEY` | RapidAPI key for Sky Scrapper backup flight search |
 | `AVIATIONSTACK_API_KEY` | Aviationstack free-tier key for route/schedule backup |
@@ -46,6 +49,12 @@ Open http://localhost:3000. Flight search uses the configured worldwide provider
 1. Create a free account at [build.nvidia.com](https://build.nvidia.com/).
 2. Create an API key from the account menu.
 3. Set it as `NVIDIA_API_KEY` and keep `NVIDIA_BASE_URL=https://integrate.api.nvidia.com/v1`.
+
+### OpenRouter fallback
+
+1. Create an account at [openrouter.ai](https://openrouter.ai/).
+2. Create an API key and set it as `OPENROUTER_API_KEY` in Vercel.
+3. Keep `OPENROUTER_MODEL=openrouter/free`. ClearSend uses NVIDIA when `NVIDIA_API_KEY` is set and automatically selects OpenRouter when it is unavailable.
 
 ## Worldwide flight providers
 
