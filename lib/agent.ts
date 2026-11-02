@@ -10,10 +10,21 @@ const nvidia = createOpenAI({ apiKey: process.env.NVIDIA_API_KEY ?? "not-configu
 const openrouter = createOpenAI({ apiKey: process.env.OPENROUTER_API_KEY ?? "not-configured", baseURL: process.env.OPENROUTER_BASE_URL ?? "https://openrouter.ai/api/v1", headers: { "HTTP-Referer": process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000", "X-Title": "ClearSend" } });
 const paypalToolkit = process.env.PAYPAL_CLIENT_ID && process.env.PAYPAL_CLIENT_SECRET ? new PayPalAgentToolkit({ clientId: process.env.PAYPAL_CLIENT_ID, clientSecret: process.env.PAYPAL_CLIENT_SECRET, configuration: { context: { sandbox: true }, actions: { orders: { create: true, get: true }, invoices: { create: true, get: true, list: true }, products: { create: true, list: true }, disputes: { list: true, get: true } } } }) : null;
 
-function nvidiaModel() {
-  if (process.env.NVIDIA_API_KEY) return nvidia.chat(process.env.NVIDIA_MODEL ?? "meta/llama-3.1-405b-instruct");
-  if (process.env.OPENROUTER_API_KEY) return openrouter.chat(process.env.OPENROUTER_MODEL ?? "meta-llama/llama-3.1-8b-instruct:free");
-  throw new Error("No AI provider is configured. Set NVIDIA_API_KEY or OPENROUTER_API_KEY in environment variables to enable the agent.");
+export function getAvailableProviders() {
+  const providers = [];
+  if (process.env.NVIDIA_API_KEY) {
+    providers.push({
+      name: "NVIDIA",
+      model: nvidia.chat(process.env.NVIDIA_MODEL ?? "meta/llama-3.1-70b-instruct"),
+    });
+  }
+  if (process.env.OPENROUTER_API_KEY) {
+    providers.push({
+      name: "OpenRouter",
+      model: openrouter.chat(process.env.OPENROUTER_MODEL ?? "meta-llama/llama-3.1-8b-instruct:free"),
+    });
+  }
+  return providers;
 }
 
 export const agentTools = {
@@ -26,16 +37,50 @@ export const agentTools = {
 };
 
 export async function runAgent(messages: Array<{ role: "user" | "assistant" | "system"; content: string }>) {
-  const model = nvidiaModel();
-  return generateText({ model, system: "You are ClearSend, a precise and warm remittance and flight assistant. Handle multi-part requests by calling every relevant read-only tool first, then present one combined summary. Always show fees, FX, received amount, flight prices, and a journey total. Never imply a payment was made unless a tool confirms it. PayPal actions are sandbox-only and require explicit user approval; never bypass tool approval.", messages, tools: { ...agentTools, ...(paypalToolkit?.getTools() ?? {}) }, maxOutputTokens: 700, stopWhen: ({ steps }) => steps.length >= 5 });
+  const providers = getAvailableProviders();
+  if (providers.length === 0) {
+    throw new Error("No AI provider is configured. Set NVIDIA_API_KEY or OPENROUTER_API_KEY in environment variables to enable the agent.");
+  }
+  
+  let lastError: Error | null = null;
+  for (const provider of providers) {
+    try {
+      return await generateText({ model: provider.model, system: "You are ClearSend, a precise and warm remittance and flight assistant. Handle multi-part requests by calling every relevant read-only tool first, then present one combined summary. Always show fees, FX, received amount, flight prices, and a journey total. Never imply a payment was made unless a tool confirms it. PayPal actions are sandbox-only and require explicit user approval; never bypass tool approval.", messages, tools: { ...agentTools, ...(paypalToolkit?.getTools() ?? {}) }, maxOutputTokens: 700, stopWhen: ({ steps }) => steps.length >= 5 });
+    } catch (error) {
+      console.error(`${provider.name} provider failed:`, error);
+      lastError = error instanceof Error ? error : new Error(String(error));
+    }
+  }
+  
+  throw new Error(`All AI providers failed. Last error: ${lastError?.message || "Unknown error"}`);
 }
 
-export function streamAgent(messages: ModelMessage[]) {
-  try {
-    const model = nvidiaModel();
-    return streamText({ model, system: "You are ClearSend, a precise and warm remittance and travel assistant. Help users send money across borders (show transparent fees and FX rates) and plan travel (search flights). Handle multi-part requests by calling every relevant read-only tool first, then present one combined summary. Always show fees, FX, received amount, flight prices, and a journey total. Never imply a payment was made unless a tool confirms it. PayPal actions are sandbox-only and require explicit user approval; never bypass tool approval. For cross-border remittances, ask for recipient email and destination details. For travel, ask for origin, destination, and dates.", messages, tools: { ...agentTools, ...(paypalToolkit?.getTools() ?? {}) }, maxOutputTokens: 700, stopWhen: ({ steps }) => steps.length >= 5, onError: ({ error }) => { console.error("agent_stream_error", error); return error instanceof Error ? error.message : "ClearSend encountered an error. Please check your configuration."; } });
-  } catch (error) {
-    console.error("agent_stream_init_failed", error);
-    throw error;
+export function streamAgent(messages: ModelMessage[], providerIndex: number = 0) {
+  const providers = getAvailableProviders();
+  if (providers.length === 0) {
+    throw new Error("No AI provider is configured. Set NVIDIA_API_KEY or OPENROUTER_API_KEY in environment variables to enable the agent.");
   }
+  
+  if (providerIndex >= providers.length) {
+    throw new Error(`Provider index ${providerIndex} out of range. Only ${providers.length} provider(s) available.`);
+  }
+
+  const provider = providers[providerIndex];
+  const systemPrompt = "You are ClearSend, a precise and warm remittance and travel assistant. Help users send money across borders (show transparent fees and FX rates) and plan travel (search flights). Handle multi-part requests by calling every relevant read-only tool first, then present one combined summary. Always show fees, FX, received amount, flight prices, and a journey total. Never imply a payment was made unless a tool confirms it. PayPal actions are sandbox-only and require explicit user approval; never bypass tool approval. For cross-border remittances, ask for recipient email and destination details. For travel, ask for origin, destination, and dates.";
+
+  console.log(`Using ${provider.name} provider for agent stream`);
+
+  return streamText({
+    model: provider.model,
+    system: systemPrompt,
+    messages,
+    tools: { ...agentTools, ...(paypalToolkit?.getTools() ?? {}) },
+    maxOutputTokens: 700,
+    stopWhen: ({ steps }) => steps.length >= 5,
+    onError: ({ error }) => {
+      console.error(`${provider.name} stream error:`, error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      return `${provider.name} failed: ${errorMessage}`;
+    },
+  });
 }
