@@ -102,12 +102,17 @@ class UpstashStorage {
   }
 }
 
+let storage: UpstashStorage | MemoryStorage | null = null;
+
 function getStorage() {
+  if (storage) return storage;
+  
   const url = process.env.UPSTASH_REDIS_REST_URL;
   const token = process.env.UPSTASH_REDIS_REST_TOKEN;
   
   if (url && token) {
-    return new UpstashStorage(url, token);
+    storage = new UpstashStorage(url, token);
+    return storage;
   }
   
   const isProduction = process.env.VERCEL_ENV === "production" || process.env.NODE_ENV === "production";
@@ -116,10 +121,9 @@ function getStorage() {
   }
   
   console.warn("escrow_storage_fallback", { message: "UPSTASH_REDIS_REST_URL/TOKEN not configured, using in-memory storage. Data will be lost on restart. This is only allowed in development." });
-  return new MemoryStorage();
+  storage = new MemoryStorage();
+  return storage;
 }
-
-const storage = getStorage();
 
 export async function createEscrow(input: {
   payer: string;
@@ -153,14 +157,14 @@ export async function createEscrow(input: {
     timeline: [{ state: "created", timestamp: now }],
   };
   
-  await storage.set(`escrow:${id}`, JSON.stringify(escrow));
+  await getStorage().set(`escrow:${id}`, JSON.stringify(escrow));
   console.info("escrow_created", { id, amount: input.amount, currency: input.currency });
   
   return escrow;
 }
 
 export async function getEscrow(id: string): Promise<EscrowRecord | null> {
-  const raw = await storage.get(`escrow:${id}`);
+  const raw = await getStorage().get(`escrow:${id}`);
   if (!raw) return null;
   try {
     return EscrowRecord.parse(JSON.parse(raw));
@@ -171,8 +175,8 @@ export async function getEscrow(id: string): Promise<EscrowRecord | null> {
 }
 
 export async function listEscrows(): Promise<EscrowRecord[]> {
-  const keys = await storage.keys("escrow:*");
-  const records = await Promise.all(keys.map((key) => storage.get(key)));
+  const keys = await getStorage().keys("escrow:*");
+  const records = await Promise.all(keys.map((key) => getStorage().get(key)));
   return records
     .filter((raw): raw is string => raw !== null)
     .map((raw) => {
@@ -202,7 +206,7 @@ async function updateEscrow(id: string, updates: Partial<EscrowRecord>, newState
     }
   }
   
-  await storage.set(`escrow:${id}`, JSON.stringify(updated));
+  await getStorage().set(`escrow:${id}`, JSON.stringify(updated));
   console.info("escrow_updated", { id, state: updated.state });
   
   return updated;
