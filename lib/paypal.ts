@@ -48,3 +48,9 @@ export async function createOrder(input: { amount: number; currency?: string; de
 export async function captureOrder(orderId: string) { return paypalFetch(`/v2/checkout/orders/${encodeURIComponent(orderId)}/capture`, { method: "POST", body: "{}" }, await getPayPalAccessToken()); }
 
 export async function getOrder(orderId: string) { return paypalFetch(`/v2/checkout/orders/${encodeURIComponent(orderId)}`, {}, await getPayPalAccessToken()); }
+
+export async function refundCapture(captureId: string, amount?: { value: string; currency: string }, note?: string) {
+  const token = await getPayPalAccessToken();
+  const body = amount ? JSON.stringify({ amount, note_to_payer: note }) : JSON.stringify({ note_to_payer: note });
+  return paypalFetch(`/v2/payments/captures/${encodeURIComponent(captureId)}/refund`, { method: "POST", body }, token);
+}

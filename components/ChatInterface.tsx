@@ -8,7 +8,7 @@ import { JourneySummary } from "./JourneySummary";
 import { Message } from "./Message";
 import type { Approval, Flight, Remittance } from "./journey-types";
 
-const suggestions = ["Send $500 to Lagos, Nigeria with transparent fees", "Search flights from New York to Lagos", "Plan a journey: remittance + flight in one conversation"];
+const suggestions = ["Send $500 to Lagos, Nigeria with transparent fees", "Search flights from New York to Lagos", "Create an escrow for a freelance job", "Plan a journey: remittance + flight in one conversation"];
 
 export function ChatInterface() {
   const { messages, sendMessage, addToolApprovalResponse, status, error } = useChat({ transport: new DefaultChatTransport({ api: "/api/agent" }) });

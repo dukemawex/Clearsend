@@ -1,6 +1,6 @@
 export type FlightOffer = {
   id: string;
-  provider: "duffel" | "rapidapi" | "aviationstack" | "kernel";
+  provider: "duffel" | "rapidapi" | "aviationstack";
   airline: string;
   airlineCode?: string;
   route: string;
@@ -20,18 +20,32 @@ type ProviderResult = { name: string; status: "success" | "error" | "empty"; mes
 
 const CITY_TO_IATA: Record<string, string> = {
   "new york": "JFK",
+  "nyc": "JFK",
   "lagos": "LOS",
+  "lag": "LOS",
   "abuja": "ABV",
   "london": "LHR",
+  "lon": "LHR",
   "accra": "ACC",
   "nairobi": "NBO",
   "johannesburg": "JNB",
   "cairo": "CAI",
   "dubai": "DXB",
+  "dub": "DXB",
   "paris": "CDG",
+  "par": "CDG",
   "amsterdam": "AMS",
   "frankfurt": "FRA",
+  "berlin": "BER",
+  "ber": "BER",
+  "rome": "FCO",
+  "rom": "FCO",
+  "milan": "MXP",
+  "mil": "MXP",
+  "barcelona": "BCN",
+  "bar": "BCN",
   "tokyo": "NRT",
+  "tyo": "NRT",
   "singapore": "SIN",
   "hong kong": "HKG",
   "los angeles": "LAX",
@@ -39,6 +53,14 @@ const CITY_TO_IATA: Record<string, string> = {
   "miami": "MIA",
   "toronto": "YYZ",
   "atlanta": "ATL",
+  "mumbai": "BOM",
+  "bom": "BOM",
+  "delhi": "DEL",
+  "del": "DEL",
+  "sydney": "SYD",
+  "syd": "SYD",
+  "melbourne": "MEL",
+  "mel": "MEL",
 };
 
 export class FlightSearchError extends Error {
@@ -132,10 +154,11 @@ async function searchDuffel(input: SearchInput, date: string): Promise<{ offers:
       const first = asRecord(segments[0]);
       const last = asRecord(segments[segments.length - 1]);
       const carrier = asRecord(first.marketing_carrier);
+      const baseAirline = asString(carrier.name, "Airline");
       return {
         id: asString(offer.id, `duffel-${index}`),
         provider: "duffel" as const,
-        airline: asString(carrier.name, "Airline"),
+        airline: isTestToken ? `${baseAirline} (test data)` : baseAirline,
         airlineCode: asString(carrier.iata_code),
         route: `${normalizeAirportCode(input.origin)} → ${normalizeAirportCode(input.destination)}`,
         origin: input.origin,
@@ -219,7 +242,7 @@ async function searchRapidApi(input: SearchInput, date: string): Promise<{ offer
       statusValue = asString(body.status, "");
       
       if (statusValue === "incomplete" && retries < maxRetries - 1) {
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        await new Promise(resolve => setTimeout(resolve, 2000 * (retries + 1)));
         retries++;
       } else {
         break;
@@ -321,6 +344,10 @@ async function searchAviationstack(input: SearchInput): Promise<{ offers: Flight
   }
 }
 
+function isTestData(result: { offers: FlightOffer[]; status: string; message?: string }): boolean {
+  return result.offers.length > 0 && result.offers[0].provider === "duffel" && result.offers[0].airline.includes("(test data)");
+}
+
 export async function searchFlights(input: SearchInput) {
   const dateValidation = validateDate(input.date);
   
@@ -346,10 +373,30 @@ export async function searchFlights(input: SearchInput) {
   };
   
   const providerResults: ProviderResult[] = [];
+  let firstResult: { provider: string; result: { offers: FlightOffer[]; status: string; message?: string } } | null = null;
+  
+  const rapidResult = await searchRapidApi(normalizedInput, date);
+  providerResults.push({ name: "rapidapi", status: rapidResult.status as "success" | "error" | "empty", message: rapidResult.message });
+  if (rapidResult.offers.length > 0 && !isTestData(rapidResult)) {
+    console.info("flight_provider_served", { provider: "rapidapi", count: rapidResult.offers.length, origin: normalizedInput.origin, destination: normalizedInput.destination });
+    return {
+      provider: "rapidapi",
+      origin: normalizedInput.origin,
+      destination: normalizedInput.destination,
+      date: input.date ?? null,
+      dateUsed: date,
+      options: rapidResult.offers,
+      success: true,
+      providers: providerResults
+    };
+  }
+  if (rapidResult.offers.length > 0 && !firstResult) {
+    firstResult = { provider: "rapidapi", result: rapidResult };
+  }
   
   const duffelResult = await searchDuffel(normalizedInput, date);
   providerResults.push({ name: "duffel", status: duffelResult.status as "success" | "error" | "empty", message: duffelResult.message });
-  if (duffelResult.offers.length > 0) {
+  if (duffelResult.offers.length > 0 && !isTestData(duffelResult)) {
     console.info("flight_provider_served", { provider: "duffel", count: duffelResult.offers.length, origin: normalizedInput.origin, destination: normalizedInput.destination });
     return {
       provider: "duffel",
@@ -363,21 +410,8 @@ export async function searchFlights(input: SearchInput) {
       note: duffelResult.message
     };
   }
-  
-  const rapidResult = await searchRapidApi(normalizedInput, date);
-  providerResults.push({ name: "rapidapi", status: rapidResult.status as "success" | "error" | "empty", message: rapidResult.message });
-  if (rapidResult.offers.length > 0) {
-    console.info("flight_provider_served", { provider: "rapidapi", count: rapidResult.offers.length, origin: normalizedInput.origin, destination: normalizedInput.destination });
-    return {
-      provider: "rapidapi",
-      origin: normalizedInput.origin,
-      destination: normalizedInput.destination,
-      date: input.date ?? null,
-      dateUsed: date,
-      options: rapidResult.offers,
-      success: true,
-      providers: providerResults
-    };
+  if (duffelResult.offers.length > 0 && !firstResult) {
+    firstResult = { provider: "duffel", result: duffelResult };
   }
   
   const aviastackResult = await searchAviationstack(normalizedInput);
@@ -394,6 +428,21 @@ export async function searchFlights(input: SearchInput) {
       success: true,
       providers: providerResults,
       note: aviastackResult.message
+    };
+  }
+  
+  if (firstResult) {
+    console.info("flight_provider_fallback_to_test", { provider: firstResult.provider });
+    return {
+      provider: firstResult.provider,
+      origin: normalizedInput.origin,
+      destination: normalizedInput.destination,
+      date: input.date ?? null,
+      dateUsed: date,
+      options: firstResult.result.offers,
+      success: true,
+      providers: providerResults,
+      note: firstResult.result.message
     };
   }
   
