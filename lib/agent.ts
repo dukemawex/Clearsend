@@ -1,9 +1,11 @@
 import { createOpenAI } from "@ai-sdk/openai";
+import { PayPalAgentToolkit } from "@paypal/agent-toolkit/ai-sdk";
 import { generateText, tool } from "ai";
 import { z } from "zod";
 import { createOrder, createPayout, getOrder, getPayoutStatus } from "@/lib/paypal";
 
 const nvidia = createOpenAI({ apiKey: process.env.NVIDIA_API_KEY ?? "not-configured", baseURL: process.env.NVIDIA_BASE_URL ?? "https://integrate.api.nvidia.com/v1" });
+const paypalToolkit = process.env.PAYPAL_CLIENT_ID && process.env.PAYPAL_CLIENT_SECRET ? new PayPalAgentToolkit({ clientId: process.env.PAYPAL_CLIENT_ID, clientSecret: process.env.PAYPAL_CLIENT_SECRET, configuration: { context: { sandbox: true }, actions: { orders: { create: true, get: true }, invoices: { create: true, get: true, list: true }, products: { create: true, list: true }, disputes: { list: true, get: true } } } }) : null;
 
 const corridors = {
   Nairobi: [{ airline: "Kenya Airways", route: "JFK → NBO", depart: "08:40", arrive: "06:15 +1", price: 684 }, { airline: "Qatar Airways", route: "JFK → NBO", depart: "21:55", arrive: "20:05 +1", price: 741 }],
@@ -22,5 +24,5 @@ export const agentTools = {
 
 export async function runAgent(messages: Array<{ role: "user" | "assistant" | "system"; content: string }>) {
   const model = process.env.NVIDIA_API_KEY ? nvidia(process.env.NVIDIA_MODEL ?? "nvidia/nemotron-3-ultra-550b-a55b") : nvidia("nvidia/nemotron-3-ultra-550b-a55b");
-  return generateText({ model, system: "You are ClearSend, a precise and warm remittance and flight assistant. Always show fees and FX clearly. Never imply a payment was made unless a tool confirms it. PayPal actions are sandbox-only and require user confirmation in the conversation.", messages, tools: agentTools, maxOutputTokens: 700, stopWhen: ({ steps }) => steps.length >= 5 });
+  return generateText({ model, system: "You are ClearSend, a precise and warm remittance and flight assistant. Always show fees and FX clearly. Never imply a payment was made unless a tool confirms it. PayPal actions are sandbox-only and require user confirmation in the conversation.", messages, tools: { ...agentTools, ...(paypalToolkit?.getTools() ?? {}) }, maxOutputTokens: 700, stopWhen: ({ steps }) => steps.length >= 5 });
 }
