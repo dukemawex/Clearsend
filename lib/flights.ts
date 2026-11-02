@@ -112,7 +112,8 @@ export async function searchFlights(input: SearchInput) {
   const attempted: string[] = [];
   for (const [name, provider] of providers) {
     attempted.push(name);
-    try { const offers = await provider(); if (offers.length > 0) { console.info("flight_provider_served", { provider: name, count: offers.length, origin: input.origin, destination: input.destination }); return { provider: name, origin: input.origin, destination: input.destination, date: dateForSearch(input.date), options: offers }; } console.warn("flight_provider_empty", { provider: name }); } catch (error) { console.warn("flight_provider_failed", { provider: name, error: error instanceof Error ? error.message : "unknown error" }); }
+    try { const offers = await provider(); if (offers.length > 0) { console.info("flight_provider_served", { provider: name, count: offers.length, origin: input.origin, destination: input.destination }); return { provider: name, origin: input.origin, destination: input.destination, date: input.date ?? null, dateUsed: dateForSearch(input.date), options: offers, success: true }; } console.warn("flight_provider_empty", { provider: name }); } catch (error) { console.warn("flight_provider_failed", { provider: name, error: error instanceof Error ? error.message : "unknown error" }); }
   }
-  throw new FlightSearchError(`No flight offers were found for ${input.origin} to ${input.destination}. Providers tried: ${attempted.join(", ")}.`, attempted);
+  console.warn("flight_search_no_results", { origin: input.origin, destination: input.destination, date: input.date, attempted });
+  return { provider: null, origin: input.origin, destination: input.destination, date: input.date ?? null, dateUsed: null, options: [], success: false, message: `No live flight offers found for ${input.origin} to ${input.destination}${input.date ? ` on ${input.date}` : " (no date specified)"}. Providers checked: ${attempted.join(", ")}. ${!input.date ? "Try providing a specific departure date (YYYY-MM-DD format)." : "Try a different date or alternate route."}` };
 }
