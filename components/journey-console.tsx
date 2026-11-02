@@ -1,0 +1,14 @@
+"use client";
+
+import { FormEvent, useState } from "react";
+
+type Message = { role: "user" | "assistant"; content: string };
+const suggestions = ["Send $250 to Nairobi", "Find a flight to Manila", "How does the FX fee work?"];
+
+export default function JourneyConsole() {
+  const [messages, setMessages] = useState<Message[]>([{ role: "assistant", content: "Hi, I’m ClearSend. I can make the numbers transparent, find a flight, or prepare a PayPal sandbox payment. What journey are we planning?" }]);
+  const [input, setInput] = useState("");
+  const [loading, setLoading] = useState(false);
+  async function submit(event: FormEvent) { event.preventDefault(); const text = input.trim(); if (!text || loading) return; const next = [...messages, { role: "user" as const, content: text }]; setMessages(next); setInput(""); setLoading(true); try { const response = await fetch("/api/agent", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ messages: next }) }); const data = await response.json(); setMessages([...next, { role: "assistant", content: data.text ?? data.error ?? "I couldn't complete that request." }]); } catch { setMessages([...next, { role: "assistant", content: "The agent is temporarily unavailable. Please try again." }]); } finally { setLoading(false); } }
+  return <main className="shell"><section className="intro"><div><div className="mark">CLEARSEND / 01</div><h1>Move money with a clear view.</h1><p>A calm, transparent way to support family, book the trip, and know exactly where every cent goes.</p></div><div className="route">PAYPAL SANDBOX · NVIDIA NIM</div></section><section className="workspace"><div className="console"><div className="eyebrow">Journey agent</div><h2>Where should we start?</h2><p className="sub">Ask in plain language. I’ll break down costs before any sandbox action.</p><div className="chat"><div className="messages">{messages.map((message, index) => <div className={`message ${message.role}`} key={`${message.role}-${index}`}>{message.content}</div>)}{loading && <div className="message assistant">Thinking through the details...</div>}</div><form className="composer" onSubmit={submit}><textarea value={input} onChange={(event) => setInput(event.target.value)} placeholder="Try: send $300 to Mexico City" aria-label="Message the journey agent" /><button className="send" disabled={loading || !input.trim()} aria-label="Send message">Send</button></form></div><div className="chips">{suggestions.map((suggestion) => <button className="chip" key={suggestion} onClick={() => setInput(suggestion)}>{suggestion}</button>)}</div></div></section></main>;
+}
