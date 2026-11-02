@@ -12,6 +12,7 @@ export type FlightOffer = {
   duration?: string;
   price: number | null;
   currency: string;
+  isCheapest?: boolean;
 };
 
 type SearchInput = { origin: string; destination: string; date?: string };
@@ -179,23 +180,55 @@ async function searchDuffel(input: SearchInput, date: string): Promise<{ offers:
   }
 }
 
-async function rapidAirport(query: string, headers: HeadersInit): Promise<{ skyId: string; entityId: string } | null> {
+async function rapidAirport(query: string, headers: HeadersInit, isCityRetry = false): Promise<{ skyId: string; entityId: string } | null> {
   try {
-    const response = await fetch(`https://sky-scrapper.p.rapidapi.com/api/v1/flights/searchAirport?query=${encodeURIComponent(query)}&locale=en-US`, { headers, cache: "no-store" });
+    const url = `https://sky-scrapper.p.rapidapi.com/api/v1/flights/searchAirport?query=${encodeURIComponent(query)}&locale=en-US`;
+    const response = await fetch(url, { headers, cache: "no-store" });
     
     if (response.status === 429) {
       throw new Error("RapidAPI rate limit exceeded (429)");
     }
     
     const body = await response.json().catch(() => ({}));
-    const bodyRecord = asRecord(body);
-    const first = Array.isArray(bodyRecord.data) ? asRecord(bodyRecord.data[0]) : {};
-    const skyId = asString(first.skyId);
-    const entityId = asString(first.entityId);
+    
+    if (!response.ok) {
+      const errorMsg = asString(asRecord(body).message, response.statusText);
+      const trimmedBody = JSON.stringify(body).slice(0, 200);
+      console.warn("rapidapi_airport_error", { query, status: response.status, error: errorMsg, body: trimmedBody });
+      throw new Error(`${response.status} ${errorMsg}`);
+    }
+    
+    const data = Array.isArray(body.data) ? body.data : [];
+    if (data.length === 0) return null;
+    
+    // Find best match by IATA code or take first result
+    const queryUpper = query.toUpperCase();
+    const bestMatch = data.find((item: unknown) => {
+      const record = asRecord(item);
+      return asString(record.skyId).toUpperCase() === queryUpper;
+    }) || data[0];
+    
+    const airport = asRecord(bestMatch);
+    const navigation = asRecord(airport.navigation);
+    const relevantFlightParams = asRecord(navigation.relevantFlightParams);
+    
+    // Check multiple possible locations for skyId and entityId
+    const skyId = asString(airport.skyId) || asString(relevantFlightParams.skyId);
+    const entityId = asString(navigation.entityId) || asString(relevantFlightParams.entityId);
     
     if (!skyId || !entityId) return null;
+    
+    console.info("rapidapi_airport_resolved", { query, skyId, entityId });
     return { skyId, entityId };
   } catch (error) {
+    if (!isCityRetry) {
+      console.warn("rapidapi_airport_retry_with_city", { originalQuery: query });
+      // Retry with city name variations
+      const cityQuery = CITY_TO_IATA[query.toLowerCase()];
+      if (cityQuery && cityQuery !== query.toUpperCase()) {
+        return rapidAirport(query.toLowerCase(), headers, true);
+      }
+    }
     throw error;
   }
 }
@@ -220,10 +253,12 @@ async function searchRapidApi(input: SearchInput, date: string): Promise<{ offer
       originEntityId: origin.entityId,
       destinationEntityId: destination.entityId,
       date,
+      cabinClass: "economy",
       adults: "1",
       currency: "USD",
       market: "en-US",
-      countryCode: "US"
+      countryCode: "US",
+      sortBy: "best"
     });
     
     let body: JsonRecord | null = null;
@@ -232,10 +267,17 @@ async function searchRapidApi(input: SearchInput, date: string): Promise<{ offer
     const maxRetries = 3;
     
     while (statusValue === "incomplete" && retries < maxRetries) {
-      const response = await fetch(`https://sky-scrapper.p.rapidapi.com/api/v2/flights/searchFlights?${params}`, { headers, cache: "no-store" });
+      const response = await fetch(`https://sky-scrapper.p.rapidapi.com/api/v2/flights/searchFlightsComplete?${params}`, { headers, cache: "no-store" });
       
       if (response.status === 429) {
         return { offers: [], status: "error", message: "RapidAPI quota/rate limit exceeded (429)" };
+      }
+      
+      if (!response.ok) {
+        const errorMsg = asString(asRecord(body).message, response.statusText);
+        const trimmedBody = JSON.stringify(body).slice(0, 300);
+        console.error("rapidapi_flight_search_error", { status: response.status, error: errorMsg, body: trimmedBody });
+        return { offers: [], status: "error", message: `RapidAPI HTTP ${response.status}: ${errorMsg}` };
       }
       
       body = asRecord(await response.json().catch(() => ({})));
@@ -253,21 +295,24 @@ async function searchRapidApi(input: SearchInput, date: string): Promise<{ offer
       return { offers: [], status: "error", message: "RapidAPI search incomplete after retries" };
     }
     
+    const data = asRecord(body.data);
     const directItineraries = Array.isArray(body.data) ? body.data : [];
-    const nestedItineraries = asRecord(body.data).itineraries;
+    const nestedItineraries = asRecord(data).itineraries;
     const itineraries: unknown[] = directItineraries.length > 0 ? directItineraries : Array.isArray(nestedItineraries) ? nestedItineraries : [];
     
     const mapped = itineraries.map<FlightOffer>((raw, index) => {
       const itinerary = asRecord(raw);
-      const leg = asRecord(Array.isArray(itinerary.legs) ? itinerary.legs[0] : undefined);
-      const segment = asRecord(Array.isArray(leg.segments) ? leg.segments[0] : undefined);
-      const carrier = asRecord(Array.isArray(segment.operatingCarrier) ? segment.operatingCarrier[0] : segment.operatingCarrier);
+      const legs = Array.isArray(itinerary.legs) ? itinerary.legs : [];
+      const leg = asRecord(legs[0]);
+      const segments = Array.isArray(leg.segments) ? leg.segments : [];
+      const segment = asRecord(segments[0]);
+      const carrier = asRecord(segment.operatingCarrier || segment.marketingCarrier);
       const price = asRecord(itinerary.price);
       return {
         id: asString(itinerary.id, `rapid-${index}`),
         provider: "rapidapi" as const,
         airline: asString(carrier.name, "Airline"),
-        airlineCode: asString(carrier.displayCode),
+        airlineCode: asString(carrier.displayCode || carrier.alternateId),
         route: `${normalizeAirportCode(input.origin)} → ${normalizeAirportCode(input.destination)}`,
         origin: input.origin,
         destination: input.destination,
@@ -375,17 +420,27 @@ export async function searchFlights(input: SearchInput) {
   const providerResults: ProviderResult[] = [];
   let firstResult: { provider: string; result: { offers: FlightOffer[]; status: string; message?: string } } | null = null;
   
+  // RapidAPI first (real-time pricing)
   const rapidResult = await searchRapidApi(normalizedInput, date);
   providerResults.push({ name: "rapidapi", status: rapidResult.status as "success" | "error" | "empty", message: rapidResult.message });
   if (rapidResult.offers.length > 0 && !isTestData(rapidResult)) {
-    console.info("flight_provider_served", { provider: "rapidapi", count: rapidResult.offers.length, origin: normalizedInput.origin, destination: normalizedInput.destination });
+    // Mark cheapest offer
+    const sortedOffers = rapidResult.offers.sort((a, b) => {
+      if (a.price === null) return 1;
+      if (b.price === null) return -1;
+      return a.price - b.price;
+    });
+    if (sortedOffers.length > 0 && sortedOffers[0].price !== null) {
+      sortedOffers[0].isCheapest = true;
+    }
+    console.info("flight_provider_served", { provider: "rapidapi", count: sortedOffers.length, origin: normalizedInput.origin, destination: normalizedInput.destination, cheapestPrice: sortedOffers[0].price });
     return {
       provider: "rapidapi",
       origin: normalizedInput.origin,
       destination: normalizedInput.destination,
       date: input.date ?? null,
       dateUsed: date,
-      options: rapidResult.offers,
+      options: sortedOffers,
       success: true,
       providers: providerResults
     };
@@ -394,17 +449,27 @@ export async function searchFlights(input: SearchInput) {
     firstResult = { provider: "rapidapi", result: rapidResult };
   }
   
+  // Duffel fallback
   const duffelResult = await searchDuffel(normalizedInput, date);
   providerResults.push({ name: "duffel", status: duffelResult.status as "success" | "error" | "empty", message: duffelResult.message });
   if (duffelResult.offers.length > 0 && !isTestData(duffelResult)) {
-    console.info("flight_provider_served", { provider: "duffel", count: duffelResult.offers.length, origin: normalizedInput.origin, destination: normalizedInput.destination });
+    // Mark cheapest offer
+    const sortedOffers = duffelResult.offers.sort((a, b) => {
+      if (a.price === null) return 1;
+      if (b.price === null) return -1;
+      return a.price - b.price;
+    });
+    if (sortedOffers.length > 0 && sortedOffers[0].price !== null) {
+      sortedOffers[0].isCheapest = true;
+    }
+    console.info("flight_provider_served", { provider: "duffel", count: sortedOffers.length, origin: normalizedInput.origin, destination: normalizedInput.destination, cheapestPrice: sortedOffers[0].price });
     return {
       provider: "duffel",
       origin: normalizedInput.origin,
       destination: normalizedInput.destination,
       date: input.date ?? null,
       dateUsed: date,
-      options: duffelResult.offers,
+      options: sortedOffers,
       success: true,
       providers: providerResults,
       note: duffelResult.message
@@ -414,6 +479,7 @@ export async function searchFlights(input: SearchInput) {
     firstResult = { provider: "duffel", result: duffelResult };
   }
   
+  // Aviationstack fallback (schedule only, no pricing)
   const aviastackResult = await searchAviationstack(normalizedInput);
   providerResults.push({ name: "aviationstack", status: aviastackResult.status as "success" | "error" | "empty", message: aviastackResult.message });
   if (aviastackResult.offers.length > 0) {
@@ -431,7 +497,17 @@ export async function searchFlights(input: SearchInput) {
     };
   }
   
+  // Fallback to test data if available
   if (firstResult) {
+    // Mark cheapest in test data
+    const sortedOffers = firstResult.result.offers.sort((a, b) => {
+      if (a.price === null) return 1;
+      if (b.price === null) return -1;
+      return a.price - b.price;
+    });
+    if (sortedOffers.length > 0 && sortedOffers[0].price !== null) {
+      sortedOffers[0].isCheapest = true;
+    }
     console.info("flight_provider_fallback_to_test", { provider: firstResult.provider });
     return {
       provider: firstResult.provider,
@@ -439,7 +515,7 @@ export async function searchFlights(input: SearchInput) {
       destination: normalizedInput.destination,
       date: input.date ?? null,
       dateUsed: date,
-      options: firstResult.result.offers,
+      options: sortedOffers,
       success: true,
       providers: providerResults,
       note: firstResult.result.message

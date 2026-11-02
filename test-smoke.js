@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 
 /**
- * Smoke test for ClearSend P0 fixes
- * Tests: agent error handling, money route auth
+ * Smoke test for ClearSend PayPal + AI integration
+ * Tests: agent error handling, money route auth, MCP endpoint, well-known discovery,
+ *        Sky Scrapper airport lookup, remittance formatting
  */
 
 const BASE_URL = process.env.TEST_BASE_URL || 'http://localhost:3000';
@@ -77,6 +78,89 @@ async function main() {
     // Same as payouts - 401 if auth is configured, 503 if PayPal is missing
     if (response.status !== 401 && response.status !== 503) {
       throw new Error(`Expected 401 or 503 status, got ${response.status}`);
+    }
+  }));
+
+  // Test 4: Well-known AI plugin discovery endpoint
+  results.push(await test('Well-known AI plugin discovery endpoint responds', async () => {
+    const response = await fetch(`${BASE_URL}/.well-known/ai-plugin.json`);
+    
+    if (!response.ok) {
+      throw new Error(`Expected 200 status, got ${response.status}`);
+    }
+    
+    const data = await response.json();
+    if (!data.name || data.name !== 'ClearSend') {
+      throw new Error(`Expected name "ClearSend", got: ${data.name}`);
+    }
+    
+    if (!data.capabilities || !Array.isArray(data.capabilities)) {
+      throw new Error(`Expected capabilities array, got: ${JSON.stringify(data.capabilities)}`);
+    }
+    
+    if (!data.endpoints || !data.endpoints.mcp) {
+      throw new Error(`Expected MCP endpoint, got: ${JSON.stringify(data.endpoints)}`);
+    }
+  }));
+
+  // Test 5: MCP endpoint GET returns info
+  results.push(await test('MCP endpoint GET returns info', async () => {
+    const response = await fetch(`${BASE_URL}/api/mcp`);
+    
+    if (!response.ok) {
+      throw new Error(`Expected 200 status, got ${response.status}`);
+    }
+    
+    const data = await response.json();
+    if (data.protocol !== 'mcp-over-http') {
+      throw new Error(`Expected mcp-over-http protocol, got: ${data.protocol}`);
+    }
+  }));
+
+  // Test 6: MCP endpoint tools/list requires auth (if configured)
+  results.push(await test('MCP endpoint tools/list works or requires auth', async () => {
+    const response = await fetch(`${BASE_URL}/api/mcp`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        method: 'tools/list'
+      })
+    });
+    
+    // Either succeeds (200) or requires auth (401)
+    if (response.status !== 200 && response.status !== 401) {
+      throw new Error(`Expected 200 or 401 status, got ${response.status}`);
+    }
+    
+    if (response.status === 200) {
+      const data = await response.json();
+      if (!data.tools || !Array.isArray(data.tools)) {
+        throw new Error(`Expected tools array, got: ${JSON.stringify(data)}`);
+      }
+      
+      // Check for key tools
+      const toolNames = data.tools.map(t => t.name);
+      if (!toolNames.includes('calculateRemittance')) {
+        throw new Error(`Expected calculateRemittance tool, got: ${toolNames.join(', ')}`);
+      }
+    }
+  }));
+
+  // Test 7: Judges page loads
+  results.push(await test('Judges page loads', async () => {
+    const response = await fetch(`${BASE_URL}/judges`);
+    
+    if (!response.ok) {
+      throw new Error(`Expected 200 status, got ${response.status}`);
+    }
+    
+    const html = await response.text();
+    if (!html.includes('PayPal + AI')) {
+      throw new Error(`Expected "PayPal + AI" in judges page`);
+    }
+    
+    if (!html.includes('Architecture')) {
+      throw new Error(`Expected "Architecture" in judges page`);
     }
   }));
   

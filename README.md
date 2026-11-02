@@ -258,3 +258,187 @@ git push -u origin main
 **Orders flow:** `createOrder` creates a PayPal order and returns an `approveUrl`. The user must open this URL in PayPal sandbox and approve the payment. After approval, call `captureOrder` to finalize. Auto-capture without user approval fails with `422`.
 
 **Credentials:** All PayPal and AI provider secrets stay server-side. Never expose them through `NEXT_PUBLIC_` variables.
+
+---
+
+## PayPal + AI: Agentic Commerce at Work
+
+ClearSend demonstrates **PayPal + AI** by building an autonomous agent that handles real money movement with human-in-the-loop approval. This section documents the deep integration of PayPal's agentic commerce capabilities.
+
+### 🎯 Core Concept
+
+Every PayPal action flows through the **@paypal/agent-toolkit**, is tracked in real-time via the **PayPal Activity Panel**, and requires explicit user consent before execution. No mock data—all transactions hit real PayPal sandbox endpoints.
+
+### 🏗️ Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    ClearSend Agent Layer                         │
+│  ┌─────────────┐  ┌──────────────┐  ┌─────────────────────┐   │
+│  │  AI SDK     │→ │  PayPal      │→ │  Custom Remittance  │   │
+│  │  Stream     │  │  Toolkit     │  │  Flight + Escrow    │   │
+│  └─────────────┘  └──────────────┘  └─────────────────────┘   │
+│                           ↓                                      │
+│              ┌────────────────────────────┐                     │
+│              │  Approval Gate (UI)        │                     │
+│              │  Human-in-the-Loop         │                     │
+│              └────────────────────────────┘                     │
+└──────────────────────────────┬──────────────────────────────────┘
+                               ↓
+┌─────────────────────────────────────────────────────────────────┐
+│                   PayPal Sandbox APIs                            │
+│  ┌────────────┐  ┌────────────┐  ┌──────────┐  ┌────────────┐ │
+│  │ Orders     │  │ Payouts    │  │ Invoices │  │ Products   │ │
+│  │ Disputes   │  │ Payments   │  │ Refunds  │  │ Subscript. │ │
+│  └────────────┘  └────────────┘  └──────────┘  └────────────┘ │
+└─────────────────────────────────────────────────────────────────┘
+                               ↓
+┌─────────────────────────────────────────────────────────────────┐
+│              External Agent Integration                          │
+│  MCP-over-HTTP: /.well-known/ai-plugin.json + /api/mcp         │
+│  Protected by x-clearsend-api-key header                        │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### 🔧 PayPal APIs & Tools Used
+
+**Orders API:**
+- `POST /v2/checkout/orders` (create)
+- `POST /v2/checkout/orders/:id/capture`
+- `GET /v2/checkout/orders/:id`
+- `POST /v2/checkout/orders/:id/authorize`
+- Toolkit: `paypal_create_order`, `paypal_get_order`, `paypal_capture_order`
+
+**Payouts API:**
+- `POST /v1/payments/payouts` (create)
+- `GET /v1/payments/payouts/:id` (status)
+- Toolkit: `paypal_create_payout`, `paypal_get_payout`
+
+**Invoices API:**
+- `POST /v2/invoicing/invoices` (create)
+- `POST /v2/invoicing/invoices/:id/send`
+- `GET /v2/invoicing/invoices`
+- Toolkit: `paypal_create_invoice`, `paypal_send_invoice`, `paypal_list_invoices`
+
+**Products API:**
+- `POST /v1/catalogs/products` (create)
+- `GET /v1/catalogs/products`
+- Toolkit: `paypal_create_product`, `paypal_list_products`
+
+**Disputes API:**
+- `GET /v1/customer/disputes`
+- `GET /v1/customer/disputes/:id`
+- Toolkit: `paypal_list_disputes`, `paypal_get_dispute`
+
+**Custom Tools:**
+- `calculateRemittance` with pre-formatted display strings
+- `searchFlights` with cheapest-offer marking
+- `createPayout` (approval-gated wrapper)
+- `createOrder` (approval-gated wrapper)
+- `captureOrder`
+- `getStatus` (unified payout/order status)
+
+### 📊 PayPal Activity Timeline
+
+The **PayPalActivityPanel** component tracks every PayPal tool call in real-time:
+
+- **Tool Name:** createPayout, createOrder, paypal_create_invoice, etc.
+- **Sanitized Args:** Redacts sensitive data (email partially masked, no secrets)
+- **PayPal IDs:** Batch ID, Order ID, Invoice ID from responses
+- **Status:** pending → approved → success/failed
+- **Latency:** Milliseconds from tool call to response
+
+This panel is visible in the right sidebar of the chat interface and expands to show full activity details.
+
+### 🔌 Agent-Readable Endpoint
+
+ClearSend exposes an **MCP-over-HTTP** endpoint so external agents can call its PayPal-backed tools:
+
+**Discovery:**
+```bash
+GET /.well-known/ai-plugin.json
+```
+
+Returns agent capabilities, endpoints, and available tools.
+
+**List Tools:**
+```bash
+POST /api/mcp
+Content-Type: application/json
+x-clearsend-api-key: <your-key>
+
+{
+  "method": "tools/list"
+}
+```
+
+**Call Tool:**
+```bash
+POST /api/mcp
+Content-Type: application/json
+x-clearsend-api-key: <your-key>
+
+{
+  "method": "tools/call",
+  "params": {
+    "name": "calculateRemittance",
+    "arguments": {
+      "amount": 500,
+      "destination": "Lagos, Nigeria",
+      "currency": "USD",
+      "midMarketRate": 1348.45,
+      "receiveCurrency": "NGN"
+    }
+  }
+}
+```
+
+### 🧪 Sandbox Test Walkthrough
+
+**Prerequisites:**
+1. PayPal Developer Account at [developer.paypal.com](https://developer.paypal.com/dashboard/)
+2. Create a Sandbox App under Apps & Credentials → Sandbox
+3. Copy Client ID and Secret to `PAYPAL_CLIENT_ID` and `PAYPAL_CLIENT_SECRET`
+4. Create a Sandbox Personal Account for receiving payouts
+5. Set `NVIDIA_API_KEY` or `OPENROUTER_API_KEY` for AI
+6. Optional: `RAPIDAPI_KEY` for flight search
+
+**Test Flow 1: Cross-Border Remittance**
+1. Open ClearSend
+2. Type: "Send $500 to Lagos, Nigeria with transparent fees"
+3. Agent calculates breakdown with displayStrings (properly formatted with thousands separators)
+4. Provide sandbox recipient email
+5. Click "Approve action" in approval bar
+6. Agent creates PayPal payout → batch ID returned
+7. Check PayPal Activity Panel for tracked tool call
+
+**Test Flow 2: Travel Booking**
+1. Type: "Search flights from New York to Lagos"
+2. Agent searches flights (RapidAPI Sky Scrapper with fixed airport lookup)
+3. Agent shows cheapest offer first (marked with `isCheapest: true`)
+4. Type: "Book the cheapest one"
+5. Agent creates PayPal order → approval URL returned
+6. Open approval URL, log in with sandbox Business account, approve
+7. Return to ClearSend, confirm approval
+8. Agent captures order
+9. PayPal Activity Panel shows: createOrder → orderId → captureOrder → captured
+
+**Test Flow 3: Combined Journey**
+1. Type: "Plan a journey: send $500 to Lagos and book a flight from New York to Lagos"
+2. Agent calls both calculateRemittance and searchFlights
+3. Agent shows combined total
+4. Separate approval for payout and order
+5. PayPal Activity Panel tracks all operations
+
+For a complete walkthrough with architecture diagrams and detailed sandbox instructions, visit `/judges` in your browser.
+
+### ✅ What Makes This PayPal + AI
+
+1. **Deep PayPal Integration:** Uses Orders, Payouts, Invoices, Products, Disputes, Subscriptions, Refunds via Agent Toolkit
+2. **Agentic Commerce:** Agent autonomously orchestrates multi-step flows: quote → order → approval → capture → payout
+3. **Real Sandbox:** Every transaction hits PayPal sandbox; visible in PayPal Developer Dashboard
+4. **Human-in-the-Loop:** ApprovalBar + approval flow for all money-moving actions
+5. **Activity Transparency:** Live tracking of every PayPal tool call with IDs, status, latency
+6. **Agent-Readable:** MCP endpoint exposes ClearSend's PayPal tools to external agents
+7. **End-to-End Flows:** Remittance, travel, escrow—complete journeys, not isolated demos
+8. **No Mock Data:** Real flight APIs, real FX calculations, real PayPal responses with proper formatting
