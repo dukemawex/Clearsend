@@ -1,3 +1,3 @@
-export type Remittance = { amountSent: number; fee: number; fxRate: number; amountReceived: number; destination: string; currency: string };
+export type Remittance = { amountSent: number; fee: number; fxRate: number; amountReceived: number; destination: string; currency: string; destinationCurrency: string };
 export type Flight = { id?: string; airline: string; route: string; depart: string; arrive: string; price: number | null; currency?: string; stops?: number; duration?: string; provider?: string };
 export type Approval = { approvalId: string; toolName: string; toolCallId: string; input: Record<string, unknown> };

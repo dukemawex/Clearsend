@@ -14,7 +14,7 @@ export function Message({ message, onApproval, onFlight }: { message: UIMessage;
     const toolName = part.type.replace("tool-", "");
     const output = part.output as Record<string, unknown> | undefined;
     if (toolName === "calculateRemittance" && output?.amountSent) return <RemittanceCard key={index} data={output as unknown as Remittance} />;
-    if (toolName === "searchFlights" && Array.isArray(output?.options)) return <FlightCard key={index} flights={output.options as Flight[]} onSelect={onFlight} />;
+    if (toolName === "searchFlights" && Array.isArray(output?.options) && (output.options as Flight[]).length > 0) return <FlightCard key={index} flights={output.options as Flight[]} onSelect={onFlight} />;
     if (part.state === "approval-requested" && part.input && part.approval?.id) return <ApprovalBar key={index} approval={{ approvalId: part.approval.id, toolName, toolCallId: part.toolCallId ?? "", input: part.input }} onApprove={onApproval} />;
     return null;
   })}</article>;

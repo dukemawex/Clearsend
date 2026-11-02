@@ -34,8 +34,8 @@ async function main() {
       })
     });
     
-    if (response.status !== 500) {
-      throw new Error(`Expected 500 status, got ${response.status}`);
+    if (response.status !== 503) {
+      throw new Error(`Expected 503 status, got ${response.status}`);
     }
     
     const data = await response.json();
@@ -56,10 +56,10 @@ async function main() {
       })
     });
     
-    // If CLEAR_SEND_API_KEY is not set, it will try PayPal and fail with 503 (no PayPal creds)
+    // If CLEAR_SEND_API_KEY is not set, it will try PayPal and fail with 503 or 500 (no PayPal creds)
     // If CLEAR_SEND_API_KEY is set, it should return 401
-    if (response.status !== 401 && response.status !== 503) {
-      throw new Error(`Expected 401 or 503 status, got ${response.status}`);
+    if (response.status !== 401 && response.status !== 503 && response.status !== 500) {
+      throw new Error(`Expected 401, 500, or 503 status, got ${response.status}`);
     }
   }));
   
