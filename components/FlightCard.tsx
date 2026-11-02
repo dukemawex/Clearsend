@@ -1,0 +1,6 @@
+import type { Flight } from "./journey-types";
+import { Card } from "./ui/card";
+
+export function FlightCard({ flights, selected, onSelect }: { flights: Flight[]; selected?: Flight; onSelect?: (flight: Flight) => void }) {
+  return <Card className="data-card flight-card"><div className="card-heading"><div><div className="card-kicker">Flight options</div><h3>Choose your way home</h3></div><span className="flight-count">{flights.length} found</span></div><div className="flight-list">{flights.map((flight) => <button className={`flight-option ${selected?.airline === flight.airline ? "selected" : ""}`} key={`${flight.airline}-${flight.price}`} onClick={() => onSelect?.(flight)}><span className="airline-mark">{flight.airline.slice(0, 2).toUpperCase()}</span><span className="flight-main"><strong>{flight.airline}</strong><small>{flight.route}</small></span><span className="flight-time"><strong>{flight.depart}</strong><small>to {flight.arrive}</small></span><span className="flight-price">${flight.price}</span></button>)}</div></Card>;
+}
