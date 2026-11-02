@@ -180,7 +180,7 @@ async function searchDuffel(input: SearchInput, date: string): Promise<{ offers:
   }
 }
 
-async function rapidAirport(query: string, headers: HeadersInit, isCityRetry = false): Promise<{ skyId: string; entityId: string } | null> {
+async function rapidAirport(query: string, headers: HeadersInit, originalIataCode?: string): Promise<{ skyId: string; entityId: string } | null> {
   try {
     const url = `https://sky-scrapper.p.rapidapi.com/api/v1/flights/searchAirport?query=${encodeURIComponent(query)}&locale=en-US`;
     const response = await fetch(url, { headers, cache: "no-store" });
@@ -201,12 +201,39 @@ async function rapidAirport(query: string, headers: HeadersInit, isCityRetry = f
     const data = Array.isArray(body.data) ? body.data : [];
     if (data.length === 0) return null;
     
-    // Find best match by IATA code or take first result
-    const queryUpper = query.toUpperCase();
-    const bestMatch = data.find((item: unknown) => {
+    // The IATA code we're trying to match (from originalIataCode or query itself)
+    const targetIataCode = (originalIataCode || query).toUpperCase();
+    
+    // Find exact match by IATA code in skyId or relevantFlightParams.skyId
+    // Prefer AIRPORT type over CITY type
+    let airportMatch: unknown = null;
+    let cityMatch: unknown = null;
+    
+    for (const item of data) {
       const record = asRecord(item);
-      return asString(record.skyId).toUpperCase() === queryUpper;
-    }) || data[0];
+      const navigation = asRecord(record.navigation);
+      const relevantFlightParams = asRecord(navigation.relevantFlightParams);
+      
+      const skyId = asString(record.skyId) || asString(relevantFlightParams.skyId);
+      const flightPlaceType = asString(record.flightPlaceType);
+      
+      if (skyId.toUpperCase() === targetIataCode) {
+        if (flightPlaceType === "AIRPORT") {
+          airportMatch = item;
+          break;
+        } else if (!cityMatch) {
+          cityMatch = item;
+        }
+      }
+    }
+    
+    const bestMatch = airportMatch || cityMatch;
+    
+    if (!bestMatch) {
+      // No exact IATA code match found
+      console.warn("rapidapi_airport_no_exact_match", { query, targetIataCode, dataCount: data.length });
+      return null;
+    }
     
     const airport = asRecord(bestMatch);
     const navigation = asRecord(airport.navigation);
@@ -218,17 +245,9 @@ async function rapidAirport(query: string, headers: HeadersInit, isCityRetry = f
     
     if (!skyId || !entityId) return null;
     
-    console.info("rapidapi_airport_resolved", { query, skyId, entityId });
+    console.info("rapidapi_airport_resolved", { query, skyId, entityId, flightPlaceType: asString(airport.flightPlaceType) });
     return { skyId, entityId };
   } catch (error) {
-    if (!isCityRetry) {
-      console.warn("rapidapi_airport_retry_with_city", { originalQuery: query });
-      // Retry with city name variations
-      const cityQuery = CITY_TO_IATA[query.toLowerCase()];
-      if (cityQuery && cityQuery !== query.toUpperCase()) {
-        return rapidAirport(query.toLowerCase(), headers, true);
-      }
-    }
     throw error;
   }
 }
@@ -240,11 +259,54 @@ async function searchRapidApi(input: SearchInput, date: string): Promise<{ offer
   try {
     const headers = { "x-rapidapi-key": key, "x-rapidapi-host": "sky-scrapper.p.rapidapi.com" };
     
-    const origin = await rapidAirport(normalizeAirportCode(input.origin), headers);
-    const destination = await rapidAirport(normalizeAirportCode(input.destination), headers);
+    const originCode = normalizeAirportCode(input.origin);
+    const destCode = normalizeAirportCode(input.destination);
+    
+    let origin = await rapidAirport(originCode, headers);
+    let destination = await rapidAirport(destCode, headers);
+    
+    // Retry with city name if no exact match found
+    if (!origin) {
+      const cityNameMap: Record<string, string> = {
+        "LOS": "Lagos",
+        "JFK": "New York",
+        "NYC": "New York",
+        "LAX": "Los Angeles",
+        "LON": "London",
+        "PAR": "Paris"
+      };
+      const cityName = cityNameMap[originCode] || Object.entries(CITY_TO_IATA).find(([, code]) => code === originCode)?.[0];
+      if (cityName) {
+        console.info("rapidapi_airport_retry_city_name", { code: originCode, cityName });
+        origin = await rapidAirport(cityName, headers, originCode);
+      }
+    }
+    
+    if (!destination) {
+      const cityNameMap: Record<string, string> = {
+        "LOS": "Lagos",
+        "JFK": "New York",
+        "NYC": "New York",
+        "LAX": "Los Angeles",
+        "LON": "London",
+        "PAR": "Paris"
+      };
+      const cityName = cityNameMap[destCode] || Object.entries(CITY_TO_IATA).find(([, code]) => code === destCode)?.[0];
+      if (cityName) {
+        console.info("rapidapi_airport_retry_city_name", { code: destCode, cityName });
+        destination = await rapidAirport(cityName, headers, destCode);
+      }
+    }
     
     if (!origin || !destination) {
-      return { offers: [], status: "error", message: "Could not resolve airport codes for origin or destination" };
+      const missingParts: string[] = [];
+      if (!origin) missingParts.push(`origin ${originCode}`);
+      if (!destination) missingParts.push(`destination ${destCode}`);
+      return { 
+        offers: [], 
+        status: "error", 
+        message: `Could not resolve airport codes for ${missingParts.join(" and ")}. Origin: ${origin ? origin.skyId + "/" + origin.entityId : "not found"}, Destination: ${destination ? destination.skyId + "/" + destination.entityId : "not found"}` 
+      };
     }
     
     const params = new URLSearchParams({
@@ -263,38 +325,56 @@ async function searchRapidApi(input: SearchInput, date: string): Promise<{ offer
     
     let body: JsonRecord | null = null;
     let statusValue = "incomplete";
+    let sessionId: string | null = null;
     let retries = 0;
-    const maxRetries = 3;
+    const maxRetries = 5;
     
-    while (statusValue === "incomplete" && retries < maxRetries) {
-      const response = await fetch(`https://sky-scrapper.p.rapidapi.com/api/v2/flights/searchFlightsComplete?${params}`, { headers, cache: "no-store" });
+    // Initial search
+    const initialResponse = await fetch(`https://sky-scrapper.p.rapidapi.com/api/v2/flights/searchFlightsComplete?${params}`, { headers, cache: "no-store" });
+    
+    if (initialResponse.status === 429) {
+      return { offers: [], status: "error", message: "RapidAPI quota/rate limit exceeded (429)" };
+    }
+    
+    if (!initialResponse.ok) {
+      const errorBody = await initialResponse.json().catch(() => ({}));
+      const errorMsg = asString(asRecord(errorBody).message, initialResponse.statusText);
+      const trimmedBody = JSON.stringify(errorBody).slice(0, 300);
+      console.error("rapidapi_flight_search_error", { status: initialResponse.status, error: errorMsg, body: trimmedBody, origin: origin.skyId, destination: destination.skyId });
+      return { offers: [], status: "error", message: `RapidAPI HTTP ${initialResponse.status}: ${errorMsg}. Origin: ${origin.skyId}/${origin.entityId}, Destination: ${destination.skyId}/${destination.entityId}` };
+    }
+    
+    body = asRecord(await initialResponse.json().catch(() => ({})));
+    statusValue = asString(body.status, "");
+    sessionId = asString(asRecord(body.context).sessionId) || null;
+    
+    // Poll searchIncomplete if status is incomplete and we have a sessionId
+    while (statusValue === "incomplete" && sessionId && retries < maxRetries) {
+      await new Promise(resolve => setTimeout(resolve, 2000 * (retries + 1)));
+      retries++;
       
-      if (response.status === 429) {
-        return { offers: [], status: "error", message: "RapidAPI quota/rate limit exceeded (429)" };
+      const incompleteUrl = `https://sky-scrapper.p.rapidapi.com/api/v2/flights/searchIncomplete?sessionId=${encodeURIComponent(sessionId)}`;
+      const incompleteResponse = await fetch(incompleteUrl, { headers, cache: "no-store" });
+      
+      if (!incompleteResponse.ok) {
+        console.warn("rapidapi_incomplete_poll_failed", { retry: retries, status: incompleteResponse.status });
+        break;
       }
       
-      if (!response.ok) {
-        const errorMsg = asString(asRecord(body).message, response.statusText);
-        const trimmedBody = JSON.stringify(body).slice(0, 300);
-        console.error("rapidapi_flight_search_error", { status: response.status, error: errorMsg, body: trimmedBody });
-        return { offers: [], status: "error", message: `RapidAPI HTTP ${response.status}: ${errorMsg}` };
-      }
-      
-      body = asRecord(await response.json().catch(() => ({})));
+      body = asRecord(await incompleteResponse.json().catch(() => ({})));
       statusValue = asString(body.status, "");
       
-      if (statusValue === "incomplete" && retries < maxRetries - 1) {
-        await new Promise(resolve => setTimeout(resolve, 2000 * (retries + 1)));
-        retries++;
-      } else {
+      if (statusValue === "complete") {
+        console.info("rapidapi_search_completed", { retries, sessionId });
         break;
       }
     }
     
     if (!body || statusValue === "incomplete") {
-      return { offers: [], status: "error", message: "RapidAPI search incomplete after retries" };
+      return { offers: [], status: "error", message: `RapidAPI search incomplete after ${retries} retries. Status: ${statusValue}, SessionId: ${sessionId || "none"}. Origin: ${origin.skyId}/${origin.entityId}, Destination: ${destination.skyId}/${destination.entityId}` };
     }
     
+    const context = asRecord(body.context);
     const data = asRecord(body.data);
     const directItineraries = Array.isArray(body.data) ? body.data : [];
     const nestedItineraries = asRecord(data).itineraries;
@@ -325,7 +405,15 @@ async function searchRapidApi(input: SearchInput, date: string): Promise<{ offer
       };
     }).filter((offer) => offer.price !== null && offer.price > 0);
     
-    return { offers: mapped, status: mapped.length > 0 ? "success" : "empty" };
+    if (mapped.length === 0) {
+      return { 
+        offers: [], 
+        status: "empty", 
+        message: `No priced offers found. Status: ${statusValue}, Context status: ${asString(context.status)}, Item count: ${itineraries.length}. Origin: ${origin.skyId}/${origin.entityId}, Destination: ${destination.skyId}/${destination.entityId}` 
+      };
+    }
+    
+    return { offers: mapped, status: "success" };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return { offers: [], status: "error", message: `RapidAPI error: ${message}` };

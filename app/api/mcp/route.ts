@@ -95,6 +95,45 @@ export async function POST(request: Request) {
             },
             required: ["id", "kind"]
           }
+        },
+        {
+          name: "createEscrow",
+          description: "Create a PayPal sandbox escrow for secure payment with deliverable verification. Use for freelance jobs, service agreements, or any transaction requiring proof of delivery before release.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              payer: { type: "string", description: "Payer name" },
+              payerEmail: { type: "string", format: "email", description: "Payer email" },
+              recipient: { type: "string", description: "Recipient name" },
+              recipientEmail: { type: "string", format: "email", description: "Recipient email (optional)" },
+              recipientPayerId: { type: "string", description: "Recipient PayPal ID (optional)" },
+              recipientCountry: { type: "string", description: "Recipient country" },
+              amount: { type: "number", description: "Escrow amount" },
+              currency: { type: "string", description: "Currency code (e.g., USD)", default: "USD" },
+              specification: { type: "string", description: "Detailed specification of deliverable" },
+              acceptanceCriteria: { type: "array", items: { type: "string" }, description: "Optional acceptance criteria" }
+            },
+            required: ["payer", "payerEmail", "recipient", "recipientCountry", "amount", "specification"]
+          }
+        },
+        {
+          name: "getEscrow",
+          description: "Get the current state and details of an escrow by ID. Shows state, timeline, amounts, specification, deliverable (if submitted), and evaluation results.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              id: { type: "string", description: "Escrow ID" }
+            },
+            required: ["id"]
+          }
+        },
+        {
+          name: "listEscrows",
+          description: "List all escrows in the system, ordered by creation date (newest first).",
+          inputSchema: {
+            type: "object",
+            properties: {}
+          }
         }
       ];
 
