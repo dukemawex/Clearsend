@@ -8,7 +8,7 @@ import { JourneySummary } from "./JourneySummary";
 import { Message } from "./Message";
 import type { Approval, Flight, Remittance } from "./journey-types";
 
-const suggestions = ["Book a flight", "Send money", "Plan a journey"];
+const suggestions = ["Send $500 to Lagos, Nigeria with transparent fees", "Search flights from New York to Lagos", "Plan a journey: remittance + flight in one conversation"];
 
 export function ChatInterface() {
   const { messages, sendMessage, addToolApprovalResponse, status, error } = useChat({ transport: new DefaultChatTransport({ api: "/api/agent" }) });
@@ -27,7 +27,7 @@ export function ChatInterface() {
   }, [messages]);
 
   async function submit(event: React.FormEvent) { event.preventDefault(); const text = input.trim(); if (!text || busy) return; setInput(""); setActionStatus(undefined); await sendMessage({ text }); }
-  function chooseSuggestion(suggestion: string) { setInput(suggestion); }
+  async function chooseSuggestion(suggestion: string) { if (busy) return; setInput(""); setActionStatus(undefined); await sendMessage({ text: suggestion }); }
   function chooseFlight(option: Flight) { setFlight(option); setActionStatus(`${option.airline} selected for your journey.`); }
   function approve(approval: Approval) { addToolApprovalResponse({ id: approval.approvalId, approved: true }); setActionStatus("Approved. ClearSend is completing the sandbox action..."); }
 
