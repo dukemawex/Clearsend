@@ -1,6 +1,8 @@
-# clearsend-journey
+# ClearSend
 
-Transparent remittances and flight payments, powered by PayPal sandbox APIs and an AI travel agent. Built for the PayPal AI Hackathon with Next.js 15, the Vercel AI SDK, NVIDIA NIM, and PayPal Agent Toolkit.
+![ClearSend social preview](public/clearsend-social.svg)
+
+Transparent cross-border money and travel, powered by PayPal sandbox APIs, Duffel flight offers, NVIDIA NIM, and the PayPal Agent Toolkit. ClearSend is built for worldwide journeys with approval before any money moves.
 
 ## Local development
 
@@ -10,7 +12,7 @@ cp .env.example .env.local
 npm run dev
 ```
 
-Open http://localhost:3000. Mock flight search and the calculator work without PayPal credentials. PayPal actions require sandbox credentials and an NVIDIA key for the agent.
+Open http://localhost:3000. Flight search uses the configured worldwide provider chain. PayPal actions require sandbox credentials and an NVIDIA key for the agent.
 
 ## Environment variables
 
@@ -21,8 +23,12 @@ Open http://localhost:3000. Mock flight search and the calculator work without P
 | `NVIDIA_API_KEY` | NVIDIA NIM API key |
 | `NVIDIA_BASE_URL` | Optional base URL; defaults to `https://integrate.api.nvidia.com/v1` |
 | `NVIDIA_MODEL` | Optional model; defaults to `nvidia/nemotron-3-ultra-550b-a55b` |
-| `DEMO_MODE` | Keep `true` for the hackathon sandbox demo |
-| `DEMO_RECIPIENT_EMAIL` | Pre-filled PayPal sandbox recipient used when no recipient email is supplied |
+| `DUFFEL_API_KEY` | Duffel test-mode token; primary flight provider |
+| `RAPIDAPI_KEY` | RapidAPI key for Sky Scrapper backup flight search |
+| `AVIATIONSTACK_API_KEY` | Aviationstack free-tier key for route/schedule backup |
+| `KERNEL_API_KEY` | Optional Kernel browser key for the last-resort browser search |
+| `KERNEL_API_URL` | Optional Kernel browser endpoint; defaults to `https://api.onkernel.com/v1/browser/sessions` |
+| `ENABLE_KERNEL_FALLBACK` | Set to `true` to opt into browser fallback after all APIs fail |
 | `NEXT_PUBLIC_APP_URL` | Public app URL for return/cancel URLs |
 
 ## Get credentials
@@ -32,8 +38,8 @@ Open http://localhost:3000. Mock flight search and the calculator work without P
 1. Sign in at [developer.paypal.com](https://developer.paypal.com/dashboard/).
 2. Open **Apps & Credentials**, switch to **Sandbox**, and create an app.
 3. Copy the app's Client ID and Secret into `PAYPAL_CLIENT_ID` and `PAYPAL_CLIENT_SECRET`.
-4. Create a sandbox Personal account under **Sandbox > Accounts** to use as `DEMO_RECIPIENT_EMAIL`.
-5. Keep `DEMO_MODE=true`. Every PayPal request is hard-coded to `api-m.sandbox.paypal.com`.
+4. Create a sandbox Personal account under **Sandbox > Accounts** for the recipient email used during approval.
+5. Every PayPal request is hard-coded to `api-m.sandbox.paypal.com`.
 
 ### NVIDIA NIM
 
@@ -41,19 +47,25 @@ Open http://localhost:3000. Mock flight search and the calculator work without P
 2. Create an API key from the account menu.
 3. Set it as `NVIDIA_API_KEY` and keep `NVIDIA_BASE_URL=https://integrate.api.nvidia.com/v1`.
 
-## Demo walkthrough
+## Worldwide flight providers
 
-Try this single multi-part prompt:
+ClearSend tries providers in this order and returns the first non-empty result:
 
-> Send $400 to my mom in Kenya for medical bills and book me a one-way flight home from Nairobi next month.
+1. Duffel test mode via `DUFFEL_API_KEY`.
+2. RapidAPI Sky Scrapper via `RAPIDAPI_KEY`.
+3. Aviationstack via `AVIATIONSTACK_API_KEY`.
+4. Optional Kernel browser fallback, only when `ENABLE_KERNEL_FALLBACK=true` and `KERNEL_API_KEY` is configured.
 
-The agent calculates the fee and FX first, searches the Nairobi corridor, and presents the combined journey. Review the breakdown and flight, then approve each PayPal action separately. The remittance creates a sandbox payout; the flight creates and captures a sandbox order. Follow up with `check the status of the payout` or paste an order ID to use the status tool.
+The agent accepts IATA codes or city names and returns airline, price, times, stops, and duration. Provider errors are logged and the next provider is tried. If all providers fail, ClearSend returns a clear error instead of inventing an offer.
 
-Useful shorter prompts:
+### Free provider keys
 
-- `How much will my family receive if I send $250 to Nairobi?`
-- `Find a flight from SFO to Manila next month.`
-- `Show me the total before I approve anything.`
+- **Duffel:** create a test account at [duffel.com](https://duffel.com), then copy a `duffel_test_` token from the dashboard.
+- **RapidAPI:** create a free account at [rapidapi.com](https://rapidapi.com), subscribe to the Sky Scrapper / Air Scraper BASIC plan, and copy `RAPIDAPI_KEY`.
+- **Aviationstack:** create a free account at [aviationstack.com](https://aviationstack.com) and copy the access key.
+- **Kernel:** create an account at [onkernel.com](https://onkernel.com), copy the API key, and explicitly enable the fallback flag. Browser search is never the default.
+
+For a complete conversation, ask ClearSend to calculate a transfer and find a flight in one request. It will show both results, a combined total, and separate approval controls before any PayPal action.
 
 ## Deploy to Vercel
 

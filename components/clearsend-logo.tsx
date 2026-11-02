@@ -1,0 +1,5 @@
+type ClearSendLogoProps = { compact?: boolean; className?: string };
+
+export function ClearSendLogo({ compact = false, className = "" }: ClearSendLogoProps) {
+  return <span className={`clearsend-logo ${compact ? "clearsend-logo-compact" : ""} ${className}`} aria-label="ClearSend" role="img"><svg viewBox="0 0 42 42" aria-hidden="true"><defs><linearGradient id="clearsend-mark" x1="5" y1="4" x2="37" y2="38" gradientUnits="userSpaceOnUse"><stop stopColor="#003087" /><stop offset="1" stopColor="#009CDE" /></linearGradient></defs><path d="M29.7 8.6A15.5 15.5 0 1 0 30 31.7" fill="none" stroke="url(#clearsend-mark)" strokeWidth="5" strokeLinecap="round" /><path d="M13 25.2c5.4-5.8 12.1-9.2 20.2-10.1" fill="none" stroke="#009CDE" strokeWidth="1.7" strokeLinecap="round" strokeDasharray="2.8 3.2" /><path d="m30.5 11.6 6.1 3.2-6.8 1.4 1.2-2.2-.5-2.4Z" fill="#009CDE" /></svg>{!compact && <strong>ClearSend</strong>}</span>;
+}
