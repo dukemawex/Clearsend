@@ -135,7 +135,7 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
   }
 }
 
-async function createDuffelOrder(trip: typeof import("@/lib/trips").TripRecord._type, captureId: string) {
+async function createDuffelOrder(trip: import("@/lib/trips").TripRecord, captureId: string) {
   const key = process.env.DUFFEL_API_KEY;
   if (!key) throw new Error("DUFFEL_API_KEY not configured");
 

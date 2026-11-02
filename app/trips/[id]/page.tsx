@@ -248,7 +248,7 @@ export default function TripDetailPage() {
                     </div>
                   )}
                   
-                  <Button onClick={() => window.print()} variant="outline" className="w-full">
+                  <Button onClick={() => window.print()} variant="secondary" className="w-full">
                     Print Itinerary
                   </Button>
                 </CardContent>

@@ -406,17 +406,17 @@ export default function EscrowPage() {
               <Button 
                 onClick={handleRefund} 
                 disabled={isSubmitting}
-                variant="outline"
-                className="w-full border-red-300 text-red-600 hover:bg-red-50"
+                variant="danger"
+                className="w-full"
               >
                 {isSubmitting ? "Processing..." : "Cancel & Refund"}
               </Button>
             )}
 
-            {escrow.paypalOrderId && (
+            {escrow.orderId && (
               <div className="pt-4 border-t space-y-2 text-sm text-gray-600">
-                <p><strong>PayPal Order ID:</strong> {escrow.paypalOrderId}</p>
-                {escrow.paypalCaptureId && <p><strong>Capture ID:</strong> {escrow.captureId}</p>}
+                <p><strong>PayPal Order ID:</strong> {escrow.orderId}</p>
+                {escrow.captureId && <p><strong>Capture ID:</strong> {escrow.captureId}</p>}
                 {escrow.payoutBatchId && <p><strong>Payout Batch ID:</strong> {escrow.payoutBatchId}</p>}
               </div>
             )}
