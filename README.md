@@ -2,7 +2,74 @@
 
 ![ClearSend social preview](public/clearsend-social.svg)
 
-Transparent cross-border money and travel, powered by PayPal sandbox APIs, Duffel flight offers, NVIDIA NIM, and the PayPal Agent Toolkit. ClearSend is built for worldwide journeys with approval before any money moves.
+**Cross-border remittance and travel planning with transparent fees, powered by PayPal + AI.**
+
+ClearSend is an AI agent for worldwide journeys: send money across borders with clear FX rates and fees, search flights, and plan complete trips in one calm conversation. Built with PayPal sandbox APIs, NVIDIA NIM / OpenRouter, AI SDK, and the PayPal Agent Toolkit. Every money-moving action requires explicit human approval.
+
+**Live demo:** https://clearsend-sigma.vercel.app/  
+**Architecture:** Next.js 15 App Router → AI SDK streaming agent → PayPal Payouts + Orders + Agent Toolkit → Duffel/RapidAPI flights → approval-gated sandbox execution
+
+---
+
+## Judge quick start
+
+### Golden prompts (working with UI chips)
+
+Try these in the live demo or after local setup:
+
+1. **"Send $500 to Lagos, Nigeria with transparent fees"**  
+   Agent calculates remittance breakdown (fee, FX rate, amount received), then asks for recipient email for PayPal sandbox payout approval.
+
+2. **"Search flights from New York to Lagos"**  
+   Agent searches real flight offers via Duffel/RapidAPI and presents airline, price, duration, stops.
+
+3. **"Plan a journey: remittance + flight in one conversation"**  
+   Agent handles both tools, shows combined total, and requests separate approval for payout and flight order.
+
+### Required environment variables
+
+| Variable | Purpose | How to get |
+| --- | --- | --- |
+| `PAYPAL_CLIENT_ID` | PayPal sandbox app client ID | [developer.paypal.com/dashboard](https://developer.paypal.com/dashboard/) → Apps & Credentials → Sandbox → Create App |
+| `PAYPAL_CLIENT_SECRET` | PayPal sandbox app secret | Same dashboard |
+| `CLEAR_SEND_API_KEY` | Server-side auth for `/api/payouts` and `/api/orders` routes | Generate any strong random string (e.g. `openssl rand -hex 32`). **Do not commit this.** Only used when calling money routes directly (agent tools handle auth internally). |
+| `NVIDIA_API_KEY` **or** `OPENROUTER_API_KEY` | AI provider for the agent | NVIDIA: [build.nvidia.com](https://build.nvidia.com/) (free tier). OpenRouter: [openrouter.ai](https://openrouter.ai/) (free models available). Agent uses NVIDIA if set, falls back to OpenRouter. |
+
+**Optional:** `DUFFEL_API_KEY`, `RAPIDAPI_KEY`, `AVIATIONSTACK_API_KEY` for flight search. Agent gracefully degrades if flight providers are unavailable.
+
+### Sandbox receiver email for payout demos
+
+Use a **sandbox Personal account email** from [developer.paypal.com/dashboard → Sandbox → Accounts](https://developer.paypal.com/dashboard/accounts). Fake emails like `test@example.com` will return `DENIED` / `FAILED` status.
+
+Example: `sb-yoursandbox47@personal.example.com` (replace with your actual sandbox account).
+
+### How to verify locally
+
+```bash
+npm install
+cp .env.example .env.local
+# Add your PayPal sandbox credentials, NVIDIA or OpenRouter key, and CLEAR_SEND_API_KEY
+npm run dev
+```
+
+Open http://localhost:3000 and try a golden prompt. The agent should:
+- Stream responses (no generic "An error occurred")
+- Show remittance cards with fee/FX breakdown
+- Show flight cards with real offers (if flight keys configured)
+- Display approval bar before any PayPal action
+- Return payout batch ID or order ID after approval
+
+### How to verify on Vercel after merge
+
+1. Deploy to Vercel and add the same env vars under **Project Settings → Environment Variables** (Production + Preview).
+2. Redeploy or trigger a new deployment.
+3. Visit the live URL and try a golden prompt.
+4. Check **Vercel Dashboard → Functions → Logs** if the agent returns errors. Look for:
+   - `No AI provider is configured` → missing `NVIDIA_API_KEY` / `OPENROUTER_API_KEY`
+   - `PayPal sandbox credentials are not configured` → missing `PAYPAL_CLIENT_ID` / `PAYPAL_CLIENT_SECRET`
+   - `422` on order capture → order was not approved by user in PayPal sandbox (expected flow: create → user approves → capture)
+
+---
 
 ## Local development
 
@@ -16,45 +83,46 @@ Open http://localhost:3000. Flight search uses the configured worldwide provider
 
 ## Environment variables
 
-| Variable | Description |
-| --- | --- |
-| `PAYPAL_CLIENT_ID` | PayPal sandbox app client ID |
-| `PAYPAL_CLIENT_SECRET` | PayPal sandbox app secret |
-| `NVIDIA_API_KEY` | NVIDIA NIM API key |
-| `NVIDIA_BASE_URL` | Optional base URL; defaults to `https://integrate.api.nvidia.com/v1` |
-| `NVIDIA_MODEL` | Optional model; defaults to `nvidia/nemotron-3-ultra-550b-a55b` |
-| `OPENROUTER_API_KEY` | Optional fallback key from [openrouter.ai](https://openrouter.ai/) |
-| `OPENROUTER_BASE_URL` | Optional base URL; defaults to `https://openrouter.ai/api/v1` |
-| `OPENROUTER_MODEL` | Optional fallback model; defaults to `openrouter/free` |
-| `DUFFEL_API_KEY` | Duffel test-mode token; primary flight provider |
-| `RAPIDAPI_KEY` | RapidAPI key for Sky Scrapper backup flight search |
-| `AVIATIONSTACK_API_KEY` | Aviationstack free-tier key for route/schedule backup |
-| `KERNEL_API_KEY` | Optional Kernel browser key for the last-resort browser search |
-| `KERNEL_API_URL` | Optional Kernel browser endpoint; defaults to `https://api.onkernel.com/v1/browser/sessions` |
-| `ENABLE_KERNEL_FALLBACK` | Set to `true` to opt into browser fallback after all APIs fail |
-| `NEXT_PUBLIC_APP_URL` | Public app URL for return/cancel URLs |
+| Variable | Description | Required |
+| --- | --- | --- |
+| `PAYPAL_CLIENT_ID` | PayPal sandbox app client ID | **Yes** (for money) |
+| `PAYPAL_CLIENT_SECRET` | PayPal sandbox app secret | **Yes** (for money) |
+| `CLEAR_SEND_API_KEY` | Server-side auth token for `/api/payouts` and `/api/orders` direct calls. Generate a strong random string. Not needed for agent tool execution (agent handles auth internally). If not set, money routes log a warning but remain unprotected. | **Recommended** |
+| `NVIDIA_API_KEY` | NVIDIA NIM API key | **Yes** (or use OpenRouter) |
+| `NVIDIA_BASE_URL` | Optional base URL; defaults to `https://integrate.api.nvidia.com/v1` | No |
+| `NVIDIA_MODEL` | Optional model; defaults to `meta/llama-3.1-405b-instruct` | No |
+| `OPENROUTER_API_KEY` | Optional fallback key from [openrouter.ai](https://openrouter.ai/) | **Yes** (if no NVIDIA) |
+| `OPENROUTER_BASE_URL` | Optional base URL; defaults to `https://openrouter.ai/api/v1` | No |
+| `OPENROUTER_MODEL` | Optional fallback model; defaults to `meta-llama/llama-3.1-8b-instruct:free` | No |
+| `DUFFEL_API_KEY` | Duffel test-mode token; primary flight provider | No |
+| `RAPIDAPI_KEY` | RapidAPI key for Sky Scrapper backup flight search | No |
+| `AVIATIONSTACK_API_KEY` | Aviationstack free-tier key for route/schedule backup | No |
+| `KERNEL_API_KEY` | Optional Kernel browser key for the last-resort browser search | No |
+| `KERNEL_API_URL` | Optional Kernel browser endpoint; defaults to `https://api.onkernel.com/v1/browser/sessions` | No |
+| `ENABLE_KERNEL_FALLBACK` | Set to `true` to opt into browser fallback after all APIs fail | No |
+| `NEXT_PUBLIC_APP_URL` | Public app URL for return/cancel URLs | No |
 
 ## Get credentials
 
-### PayPal sandbox
+### PayPal sandbox (required for money actions)
 
 1. Sign in at [developer.paypal.com](https://developer.paypal.com/dashboard/).
 2. Open **Apps & Credentials**, switch to **Sandbox**, and create an app.
 3. Copy the app's Client ID and Secret into `PAYPAL_CLIENT_ID` and `PAYPAL_CLIENT_SECRET`.
-4. Create a sandbox Personal account under **Sandbox > Accounts** for the recipient email used during approval.
+4. Create a sandbox **Personal account** under **Sandbox → Accounts** for the recipient email used during payout approval. Use the email from this account in your demo (e.g. `sb-yoursandbox47@personal.example.com`). **Fake emails will fail.**
 5. Every PayPal request is hard-coded to `api-m.sandbox.paypal.com`.
 
-### NVIDIA NIM
+### NVIDIA NIM (recommended AI provider)
 
 1. Create a free account at [build.nvidia.com](https://build.nvidia.com/).
 2. Create an API key from the account menu.
-3. Set it as `NVIDIA_API_KEY` and keep `NVIDIA_BASE_URL=https://integrate.api.nvidia.com/v1`.
+3. Set it as `NVIDIA_API_KEY`. The agent uses model `meta/llama-3.1-405b-instruct` by default (free tier).
 
-### OpenRouter fallback
+### OpenRouter fallback (alternative AI provider)
 
 1. Create an account at [openrouter.ai](https://openrouter.ai/).
-2. Create an API key and set it as `OPENROUTER_API_KEY` in Vercel.
-3. Keep `OPENROUTER_MODEL=openrouter/free`. ClearSend uses NVIDIA when `NVIDIA_API_KEY` is set and automatically selects OpenRouter when it is unavailable.
+2. Create an API key and set it as `OPENROUTER_API_KEY`.
+3. The agent uses `meta-llama/llama-3.1-8b-instruct:free` by default. ClearSend uses NVIDIA when `NVIDIA_API_KEY` is set and automatically selects OpenRouter when it is unavailable.
 
 ## Worldwide flight providers
 
@@ -78,7 +146,17 @@ For a complete conversation, ask ClearSend to calculate a transfer and find a fl
 
 ## Deploy to Vercel
 
-Import this repository into Vercel, add the variables above under Project Settings > Environment Variables for Preview and Production, and deploy. The App Router API routes are deployed as serverless functions. Set `NEXT_PUBLIC_APP_URL` to the final Vercel URL. Keep the PayPal credentials in sandbox mode; this app rejects non-sandbox PayPal URLs.
+Import this repository into Vercel, add the variables above under **Project Settings → Environment Variables** for Preview and Production, and deploy. The App Router API routes are deployed as serverless functions. Set `NEXT_PUBLIC_APP_URL` to the final Vercel URL.
+
+**Required for working demo:**
+- `PAYPAL_CLIENT_ID` + `PAYPAL_CLIENT_SECRET` (sandbox)
+- `NVIDIA_API_KEY` or `OPENROUTER_API_KEY`
+- `CLEAR_SEND_API_KEY` (recommended for money route protection)
+
+**Optional for flight search:**
+- `DUFFEL_API_KEY`, `RAPIDAPI_KEY`, or `AVIATIONSTACK_API_KEY`
+
+Keep the PayPal credentials in sandbox mode; this app rejects non-sandbox PayPal URLs.
 
 For CLI deployment, run `npx vercel`, then add variables with `vercel env add`.
 
@@ -103,4 +181,10 @@ git push -u origin main
 
 ## API safety
 
-The agent's payout and order tools require approval. The frontend calls the payout route only after approval and captures a flight order only after its order creation succeeds. Credentials stay server-side; never expose PayPal secrets or the NVIDIA key through `NEXT_PUBLIC_` variables.
+**Agent tool execution:** The agent's `createPayout` and `createOrder` tools require explicit user approval before execution. The UI displays an approval bar; nothing moves until the user clicks "Approve action."
+
+**Direct API routes:** `/api/payouts` and `/api/orders` are protected by `CLEAR_SEND_API_KEY`. If the env var is set, direct calls require a matching `x-clearsend-api-key` header (returns `401` otherwise). If `CLEAR_SEND_API_KEY` is not set, a warning is logged and the routes remain unprotected for demo purposes. **Agent tool execution does not call these routes directly**—tools use the PayPal SDK internally with server-side credentials.
+
+**Orders flow:** `createOrder` creates a PayPal order and returns an `approveUrl`. The user must open this URL in PayPal sandbox and approve the payment. After approval, call `captureOrder` to finalize. Auto-capture without user approval fails with `422`.
+
+**Credentials:** All PayPal and AI provider secrets stay server-side. Never expose them through `NEXT_PUBLIC_` variables.
