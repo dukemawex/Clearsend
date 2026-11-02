@@ -110,7 +110,12 @@ function getStorage() {
     return new UpstashStorage(url, token);
   }
   
-  console.warn("escrow_storage_fallback", { message: "UPSTASH_REDIS_REST_URL/TOKEN not configured, using in-memory storage. Data will be lost on restart." });
+  const isProduction = process.env.VERCEL_ENV === "production" || process.env.NODE_ENV === "production";
+  if (isProduction) {
+    throw new EscrowError("Escrow storage not configured. Set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN in production environment variables.", "STORAGE_NOT_CONFIGURED");
+  }
+  
+  console.warn("escrow_storage_fallback", { message: "UPSTASH_REDIS_REST_URL/TOKEN not configured, using in-memory storage. Data will be lost on restart. This is only allowed in development." });
   return new MemoryStorage();
 }
 
