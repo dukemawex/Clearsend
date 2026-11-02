@@ -9,7 +9,7 @@ import { Message } from "./Message";
 import { PayPalActivityPanel } from "./PayPalActivityPanel";
 import type { Approval, Flight, Remittance, PayPalActivity } from "./journey-types";
 
-const suggestions = ["Send $500 to Lagos, Nigeria with transparent fees", "Search flights from New York to Lagos", "Plan a journey: remittance + flight in one conversation"];
+const suggestions = ["Send $500 to Lagos, Nigeria with transparent fees", "Search flights from New York to Lagos", "Create an escrow for a freelance job", "Plan a journey: remittance + flight in one conversation"];
 
 // PayPal tool names that we want to track
 const PAYPAL_TOOLS = [

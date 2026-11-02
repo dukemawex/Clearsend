@@ -33,7 +33,16 @@ Try these in the live demo or after local setup:
 | `PAYPAL_CLIENT_ID` | PayPal sandbox app client ID | [developer.paypal.com/dashboard](https://developer.paypal.com/dashboard/) → Apps & Credentials → Sandbox → Create App |
 | `PAYPAL_CLIENT_SECRET` | PayPal sandbox app secret | Same dashboard |
 | `CLEAR_SEND_API_KEY` | Server-side auth for `/api/payouts` and `/api/orders` routes | Generate any strong random string (e.g. `openssl rand -hex 32`). **Do not commit this.** Only used when calling money routes directly (agent tools handle auth internally). |
-| `NVIDIA_API_KEY` **or** `OPENROUTER_API_KEY` | AI provider for the agent | NVIDIA: [build.nvidia.com](https://build.nvidia.com/) (free tier). OpenRouter: [openrouter.ai](https://openrouter.ai/) (free models available). Agent uses NVIDIA if set, falls back to OpenRouter. |
+| `NVIDIA_API_KEY` **or** `OPENROUTER_API_KEY` | AI provider for the agent | NVIDIA: [build.nvidia.com](https://build.nvidia.com/) (free tier). OpenRouter: [openrouter.ai](https://openrouter.ai/). Agent tries NVIDIA first, falls back to OpenRouter if NVIDIA fails. **At least one is required.** |
+
+**Current working models (verified Nov 2026):**
+- **NVIDIA:** `meta/llama-3.3-70b-instruct` (default, free tier)
+- **OpenRouter:** `meta-llama/llama-3.1-8b-instruct` (default, requires credits)
+
+**Note:** Some models were deprecated/EOL:
+- ❌ `meta/llama-3.1-405b-instruct` (404 - doesn't exist)
+- ❌ `meta/llama-3.1-8b-instruct` on NVIDIA (410 Gone - EOL Aug 2026)
+- ❌ `meta-llama/llama-3.1-8b-instruct:free` on OpenRouter (unavailable)
 
 **Optional:** `DUFFEL_API_KEY`, `RAPIDAPI_KEY`, `AVIATIONSTACK_API_KEY` for flight search. Agent gracefully degrades if flight providers are unavailable.
 
@@ -90,10 +99,10 @@ Open http://localhost:3000. Flight search uses the configured worldwide provider
 | `CLEAR_SEND_API_KEY` | Server-side auth token for `/api/payouts` and `/api/orders` direct calls. Generate a strong random string. Not needed for agent tool execution (agent handles auth internally). If not set, money routes log a warning but remain unprotected. | **Recommended** |
 | `NVIDIA_API_KEY` | NVIDIA NIM API key | **Yes** (or use OpenRouter) |
 | `NVIDIA_BASE_URL` | Optional base URL; defaults to `https://integrate.api.nvidia.com/v1` | No |
-| `NVIDIA_MODEL` | Optional model; defaults to `meta/llama-3.1-405b-instruct` | No |
-| `OPENROUTER_API_KEY` | Optional fallback key from [openrouter.ai](https://openrouter.ai/) | **Yes** (if no NVIDIA) |
+| `NVIDIA_MODEL` | Optional model; defaults to `meta/llama-3.3-70b-instruct` (Nov 2026 - current, free tier). **DO NOT use deprecated models:** `meta/llama-3.1-405b-instruct` (404), `meta/llama-3.1-8b-instruct` (410 EOL Aug 2026) | No |
+| `OPENROUTER_API_KEY` | Optional fallback key from [openrouter.ai](https://openrouter.ai/). Agent tries NVIDIA first, then falls back to OpenRouter if NVIDIA fails. | **Yes** (if no NVIDIA) |
 | `OPENROUTER_BASE_URL` | Optional base URL; defaults to `https://openrouter.ai/api/v1` | No |
-| `OPENROUTER_MODEL` | Optional fallback model; defaults to `meta-llama/llama-3.1-8b-instruct:free` | No |
+| `OPENROUTER_MODEL` | Optional fallback model; defaults to `meta-llama/llama-3.1-8b-instruct` (requires credits). **DO NOT use:** `meta-llama/llama-3.1-8b-instruct:free` (unavailable Nov 2026) | No |
 | `DUFFEL_API_KEY` | Duffel test-mode token; primary flight provider | No |
 | `RAPIDAPI_KEY` | RapidAPI key for Sky Scrapper backup flight search | No |
 | `AVIATIONSTACK_API_KEY` | Aviationstack free-tier key for route/schedule backup | No |
@@ -101,6 +110,67 @@ Open http://localhost:3000. Flight search uses the configured worldwide provider
 | `KERNEL_API_URL` | Optional Kernel browser endpoint; defaults to `https://api.onkernel.com/v1/browser/sessions` | No |
 | `ENABLE_KERNEL_FALLBACK` | Set to `true` to opt into browser fallback after all APIs fail | No |
 | `NEXT_PUBLIC_APP_URL` | Public app URL for return/cancel URLs | No |
+| `UPSTASH_REDIS_REST_URL` | Upstash Redis REST URL for escrow storage | **Yes** (for escrow) |
+| `UPSTASH_REDIS_REST_TOKEN` | Upstash Redis REST token | **Yes** (for escrow) |
+
+## PayPal Escrow
+
+ClearSend includes a complete PayPal sandbox escrow system for secure payments with deliverable verification. Use it for freelance jobs, service agreements, or any transaction requiring proof of delivery before release.
+
+### Escrow Flow
+
+1. **Create Escrow**: Agent or user creates an escrow with payer, recipient (email or PayPal payer ID, country, currency), amount, and a written specification with acceptance criteria.
+2. **Fund Escrow**: Funds are deposited into the platform's PayPal account via PayPal Orders v2 (create → payer approval → capture). Escrow state becomes 'funded' only after capture is COMPLETED.
+3. **Submit Deliverable**: Recipient submits deliverable (text/URL/notes) for evaluation.
+4. **Verify Deliverable**: Agent evaluates the deliverable against the specification using an LLM with structured output (met: boolean, reasons, per-criterion results). No auto-release without a passing evaluation.
+5. **Approve Release**: Human approval step (ApprovalBar) before any payout is sent.
+6. **Release Funds**: On approved release, funds are sent via PayPal Payouts API to the recipient's PayPal email/phone/payer ID in any supported country/currency. Payout batch ID and status are recorded.
+7. **Refund Path**: If spec is not met or user cancels, the captured payment is refunded via `/v2/payments/captures/{id}/refund`.
+
+### Escrow State Machine
+
+`created` → `funded` → `submitted` → `verified|rejected` → `released|refunded`
+
+State transitions are idempotent and never double-pay.
+
+### Escrow Storage
+
+Escrow records are persisted server-side in Upstash Redis (via env `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN`). If not configured, falls back to in-memory storage with a warning (data lost on restart).
+
+**Recommended**: Use Upstash Redis REST for production. Create a free database at [console.upstash.com](https://console.upstash.com/), copy the REST URL and token, and add them to your environment variables.
+
+### Escrow API Routes
+
+- `POST /api/escrow/create` - Create a new escrow
+- `POST /api/escrow/fund` - Fund an escrow (create order or capture existing order)
+- `POST /api/escrow/submit` - Submit deliverable for verification
+- `POST /api/escrow/verify` - Evaluate deliverable with LLM
+- `POST /api/escrow/release` - Release funds to recipient (requires human approval)
+- `POST /api/escrow/refund` - Refund captured payment to payer
+- `GET /api/escrow/[id]` - Get escrow details by ID
+
+### Escrow Agent Tools
+
+- `createEscrow` - Create a new escrow
+- `getEscrow` - Get escrow details by ID
+- `listEscrows` - List all escrows (newest first)
+
+### Escrow UI Component
+
+`EscrowCard` displays escrow state, timeline, amounts, specification, deliverable (if submitted), and evaluation results.
+
+### Testing Escrow in Sandbox
+
+1. Create an escrow with specification and acceptance criteria
+2. Use the returned escrow ID to fund it (creates PayPal order)
+3. Approve the order in PayPal sandbox
+4. Capture the order to move escrow to 'funded' state
+5. Submit a deliverable for verification
+6. Verify the deliverable (LLM evaluates against criteria)
+7. If verified, approve release (human approval step)
+8. Funds are sent via PayPal Payouts to recipient
+
+**Note**: All PayPal operations use sandbox mode. Never send real money outside the PayPal sandbox unless env is explicitly live.
 
 ## Get credentials
 

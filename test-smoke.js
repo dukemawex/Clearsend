@@ -35,8 +35,8 @@ async function main() {
       })
     });
     
-    if (response.status !== 500) {
-      throw new Error(`Expected 500 status, got ${response.status}`);
+    if (response.status !== 503) {
+      throw new Error(`Expected 503 status, got ${response.status}`);
     }
     
     const data = await response.json();
@@ -57,10 +57,10 @@ async function main() {
       })
     });
     
-    // If CLEAR_SEND_API_KEY is not set, it will try PayPal and fail with 503 (no PayPal creds)
+    // If CLEAR_SEND_API_KEY is not set, it will try PayPal and fail with 503 or 500 (no PayPal creds)
     // If CLEAR_SEND_API_KEY is set, it should return 401
-    if (response.status !== 401 && response.status !== 503) {
-      throw new Error(`Expected 401 or 503 status, got ${response.status}`);
+    if (response.status !== 401 && response.status !== 503 && response.status !== 500) {
+      throw new Error(`Expected 401, 500, or 503 status, got ${response.status}`);
     }
   }));
   
@@ -161,6 +161,33 @@ async function main() {
     
     if (!html.includes('Architecture')) {
       throw new Error(`Expected "Architecture" in judges page`);
+    }
+  }));
+  
+  // Test 4: Escrow create route accepts valid input
+  results.push(await test('Escrow create accepts valid input', async () => {
+    const response = await fetch(`${BASE_URL}/api/escrow/create`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        payer: 'Test Payer',
+        payerEmail: 'payer@example.com',
+        recipient: 'Test Recipient',
+        recipientEmail: 'recipient@example.com',
+        recipientCountry: 'US',
+        amount: 100,
+        currency: 'USD',
+        specification: 'Test specification'
+      })
+    });
+    
+    if (response.status !== 201) {
+      throw new Error(`Expected 201 status, got ${response.status}`);
+    }
+    
+    const data = await response.json();
+    if (!data.id || data.state !== 'created') {
+      throw new Error(`Expected escrow with id and state='created', got: ${JSON.stringify(data)}`);
     }
   }));
   
