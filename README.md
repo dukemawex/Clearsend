@@ -101,6 +101,67 @@ Open http://localhost:3000. Flight search uses the configured worldwide provider
 | `KERNEL_API_URL` | Optional Kernel browser endpoint; defaults to `https://api.onkernel.com/v1/browser/sessions` | No |
 | `ENABLE_KERNEL_FALLBACK` | Set to `true` to opt into browser fallback after all APIs fail | No |
 | `NEXT_PUBLIC_APP_URL` | Public app URL for return/cancel URLs | No |
+| `UPSTASH_REDIS_REST_URL` | Upstash Redis REST URL for escrow storage | **Yes** (for escrow) |
+| `UPSTASH_REDIS_REST_TOKEN` | Upstash Redis REST token | **Yes** (for escrow) |
+
+## PayPal Escrow
+
+ClearSend includes a complete PayPal sandbox escrow system for secure payments with deliverable verification. Use it for freelance jobs, service agreements, or any transaction requiring proof of delivery before release.
+
+### Escrow Flow
+
+1. **Create Escrow**: Agent or user creates an escrow with payer, recipient (email or PayPal payer ID, country, currency), amount, and a written specification with acceptance criteria.
+2. **Fund Escrow**: Funds are deposited into the platform's PayPal account via PayPal Orders v2 (create → payer approval → capture). Escrow state becomes 'funded' only after capture is COMPLETED.
+3. **Submit Deliverable**: Recipient submits deliverable (text/URL/notes) for evaluation.
+4. **Verify Deliverable**: Agent evaluates the deliverable against the specification using an LLM with structured output (met: boolean, reasons, per-criterion results). No auto-release without a passing evaluation.
+5. **Approve Release**: Human approval step (ApprovalBar) before any payout is sent.
+6. **Release Funds**: On approved release, funds are sent via PayPal Payouts API to the recipient's PayPal email/phone/payer ID in any supported country/currency. Payout batch ID and status are recorded.
+7. **Refund Path**: If spec is not met or user cancels, the captured payment is refunded via `/v2/payments/captures/{id}/refund`.
+
+### Escrow State Machine
+
+`created` → `funded` → `submitted` → `verified|rejected` → `released|refunded`
+
+State transitions are idempotent and never double-pay.
+
+### Escrow Storage
+
+Escrow records are persisted server-side in Upstash Redis (via env `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN`). If not configured, falls back to in-memory storage with a warning (data lost on restart).
+
+**Recommended**: Use Upstash Redis REST for production. Create a free database at [console.upstash.com](https://console.upstash.com/), copy the REST URL and token, and add them to your environment variables.
+
+### Escrow API Routes
+
+- `POST /api/escrow/create` - Create a new escrow
+- `POST /api/escrow/fund` - Fund an escrow (create order or capture existing order)
+- `POST /api/escrow/submit` - Submit deliverable for verification
+- `POST /api/escrow/verify` - Evaluate deliverable with LLM
+- `POST /api/escrow/release` - Release funds to recipient (requires human approval)
+- `POST /api/escrow/refund` - Refund captured payment to payer
+- `GET /api/escrow/[id]` - Get escrow details by ID
+
+### Escrow Agent Tools
+
+- `createEscrow` - Create a new escrow
+- `getEscrow` - Get escrow details by ID
+- `listEscrows` - List all escrows (newest first)
+
+### Escrow UI Component
+
+`EscrowCard` displays escrow state, timeline, amounts, specification, deliverable (if submitted), and evaluation results.
+
+### Testing Escrow in Sandbox
+
+1. Create an escrow with specification and acceptance criteria
+2. Use the returned escrow ID to fund it (creates PayPal order)
+3. Approve the order in PayPal sandbox
+4. Capture the order to move escrow to 'funded' state
+5. Submit a deliverable for verification
+6. Verify the deliverable (LLM evaluates against criteria)
+7. If verified, approve release (human approval step)
+8. Funds are sent via PayPal Payouts to recipient
+
+**Note**: All PayPal operations use sandbox mode. Never send real money outside the PayPal sandbox unless env is explicitly live.
 
 ## Get credentials
 

@@ -80,6 +80,33 @@ async function main() {
     }
   }));
   
+  // Test 4: Escrow create route accepts valid input
+  results.push(await test('Escrow create accepts valid input', async () => {
+    const response = await fetch(`${BASE_URL}/api/escrow/create`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        payer: 'Test Payer',
+        payerEmail: 'payer@example.com',
+        recipient: 'Test Recipient',
+        recipientEmail: 'recipient@example.com',
+        recipientCountry: 'US',
+        amount: 100,
+        currency: 'USD',
+        specification: 'Test specification'
+      })
+    });
+    
+    if (response.status !== 201) {
+      throw new Error(`Expected 201 status, got ${response.status}`);
+    }
+    
+    const data = await response.json();
+    if (!data.id || data.state !== 'created') {
+      throw new Error(`Expected escrow with id and state='created', got: ${JSON.stringify(data)}`);
+    }
+  }));
+  
   console.log(`\nResults: ${results.filter(Boolean).length}/${results.length} tests passed`);
   process.exit(results.every(Boolean) ? 0 : 1);
 }
