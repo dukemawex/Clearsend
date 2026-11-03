@@ -1,4 +1,4 @@
-// Platform-neutral escrow bot logic shared by Telegram and Discord.
+// Platform-neutral escrow bot logic used by the Telegram bot.
 // Reuses lib/escrow, lib/escrow-links, lib/fx, lib/paypal, lib/documents and the shared verifier.
 import { randomBytes } from "crypto";
 import { attachEscrowDocument, createEscrow, fundEscrow, getEscrow, refundEscrow, releaseEscrow, submitDeliverable, verifyDeliverable, type EscrowRecord } from "@/lib/escrow";
@@ -10,15 +10,16 @@ import { evaluateEscrow } from "@/lib/verifier";
 import { del, getJSON, k, logActivity, setJSON, once } from "./store";
 import { confirmPhrase, isEmail, isEscrowId, isInviteCode, parseInlineEscrow, parseQuote, parseRoleLink, phraseMatches, quoteBreakdown, roleAllowed, type Role } from "./parse";
 import { recordActivity } from "@/lib/activity";
+import { receiptMessages } from "./notify";
 
 function botLog(ctx: Pick<Ctx, "platform" | "userName" | "isGroup">, subject: string | undefined, summary: string) {
   return recordActivity({ kind: "chat", subject: subject || `${ctx.platform}-chat`, actor: `${ctx.platform}:${ctx.userName}`, summary: `${summary} (${ctx.platform}${ctx.isGroup ? " group" : " DM"})` });
 }
 
-export type Platform = "telegram" | "discord";
+export type Platform = "telegram";
 export type Ctx = { platform: Platform; chatId: string; userId: string; userName: string; isGroup: boolean };
 export type Button = { label: string; id?: string; url?: string; style?: "primary" | "danger" | "success" | "secondary" };
-export type Reply = { text: string; buttons?: Button[]; ephemeral?: boolean; forceReply?: boolean; dm?: { text: string; buttons?: Button[] } };
+export type Reply = { text: string; buttons?: Button[]; ephemeral?: boolean; forceReply?: boolean; dm?: { text: string; buttons?: Button[]; to?: string } };
 export type IncomingDoc = { name: string; mime: string; bytes: ArrayBuffer };
 
 const DAY = 86400;
@@ -63,13 +64,13 @@ export function telegramInviteLinks(code: string) {
 
 // ---------- help / quote ----------
 export function help(platform: Platform): Reply {
-  const p = platform === "telegram" ? "/" : "/escrow ";
+  void platform; const p = "/";
   return { text: [
     "ClearSend escrow bot (PayPal sandbox). The money only moves after the payer approves in PayPal, the AI verifier checks the work, and the payer confirms with a button and typed words.",
     "",
-    platform === "telegram" ? "/escrow <amount> <CUR> to <name> [email] for <spec>, or /escrow for guided steps" : "/escrow create amount currency recipient spec [recipient_email] [payer_email] [country]",
+    "/escrow <amount> <CUR> to <name> [email] for <spec>, or /escrow for guided steps",
     `${p}status [id]: where the escrow is`,
-    `${platform === "telegram" ? "/join <code or role link>" : "/escrow join code"}: take your role (payer, recipient, verifier)`,
+    `/join <code or role link>: take your role (payer, recipient, verifier)`,
     `${p}fund: payer pays into escrow with PayPal`,
     `${p}submit: recipient submits work (text or a file)`,
     `${p}verify: AI checks the work against the spec`,
@@ -164,7 +165,7 @@ async function finishCreate(ctx: Ctx, d: Required<Draft>): Promise<Reply> {
   const tg = ctx.platform === "telegram";
   const joinLine = (role: string, code: string) => {
     const links = tg ? telegramInviteLinks(code) : null;
-    return `${role}: ${links ? links.dm : ""}${links ? "  or in this chat: " : ""}${tg ? `/join ${code}` : `/escrow join code:${code}`}`;
+    return `${role}: ${links ? links.dm : ""}${links ? "  or in this chat: " : ""}/join ${code}`;
   };
   return {
     text: [
@@ -352,7 +353,7 @@ export async function awaitingPhrase(ctx: Ctx): Promise<string | null> {
   return getJSON<string>(k("await", ctx.platform, ctx.chatId, ctx.userId));
 }
 
-/** Typed confirmation words (Telegram reply text or Discord modal field). */
+/** Typed confirmation words (Telegram reply text). */
 export async function submitPhrase(ctx: Ctx, nonce: string, typed: string): Promise<Reply> {
   const p = await getJSON<Pending>(k("confirm", nonce));
   await del(k("await", ctx.platform, ctx.chatId, ctx.userId));
@@ -381,29 +382,36 @@ async function execute(ctx: Ctx, nonce: string, p: Pending): Promise<Reply> {
       const cap = await captureOrder(order.orderId);
       const captureId = cap.purchase_units?.[0]?.payments?.captures?.[0]?.id as string | undefined;
       if (!captureId) throw new Error("PayPal returned no capture id");
-      await fundEscrow(escrow.id, order.orderId, captureId);
+      const funded = await fundEscrow(escrow.id, order.orderId, captureId, cap.purchase_units?.[0]?.payments?.captures?.[0]?.status ?? cap.status);
       await del(k("order", escrow.id));
       await logActivity({ platform: ctx.platform, chatId: ctx.chatId, userId: ctx.userId, action: "fund", escrowId: escrow.id, ok: true });
-      return { text: `Funded. ${money(escrow.amount, escrow.currency)} captured into escrow (PayPal sandbox capture ${captureId}). Recipient: submit your work.` };
+      return withReceipt(funded, "funding", `Funded. ${money(escrow.amount, escrow.currency)} captured into escrow (PayPal sandbox capture ${captureId}). Recipient: submit your work.`);
     }
     if (p.action === "release") {
       if (escrow.state !== "verified" || !escrow.evaluationResult?.met) return { text: `Escrow is ${escrow.state}; release needs AI verification.` };
       const payout = await createPayout({ recipientEmail: escrow.recipientEmail || escrow.recipientPayerId!, amount: escrow.amount, currency: escrow.currency, note: `ClearSend Escrow Release: ${escrow.specification.slice(0, 100)}` });
       const batchId = payout.batch_header?.payout_batch_id as string | undefined;
       if (!batchId) throw new Error("PayPal returned no payout batch id");
-      await releaseEscrow(escrow.id, batchId, payout.items?.[0]?.payout_item_id);
+      const released = await releaseEscrow(escrow.id, batchId, payout.items?.[0]?.payout_item_id, payout.batch_header?.batch_status);
       await logActivity({ platform: ctx.platform, chatId: ctx.chatId, userId: ctx.userId, action: "release", escrowId: escrow.id, ok: true });
-      return { text: `Released. ${money(escrow.amount, escrow.currency)} sent to ${escrow.recipient} via PayPal Payouts (sandbox batch ${batchId}).` };
+      return withReceipt(released, "payout", `Released. ${money(escrow.amount, escrow.currency)} sent to ${escrow.recipient} via PayPal Payouts (sandbox batch ${batchId}).`);
     }
     if (!escrow.captureId || !["funded", "submitted", "rejected"].includes(escrow.state)) return { text: `Escrow is ${escrow.state}; nothing to refund.` };
     const r = await refundCapture(escrow.captureId, { value: escrow.amount.toFixed(2), currency: escrow.currency }, "ClearSend escrow refund (chat)");
-    await refundEscrow(escrow.id, r.id as string);
+    const refunded = await refundEscrow(escrow.id, r.id as string, r.status as string | undefined);
     await logActivity({ platform: ctx.platform, chatId: ctx.chatId, userId: ctx.userId, action: "refund", escrowId: escrow.id, ok: true });
-    return { text: `Refunded ${money(escrow.amount, escrow.currency)} to the payer (PayPal sandbox refund ${r.id}).` };
+    return withReceipt(refunded, "refund", `Refunded ${money(escrow.amount, escrow.currency)} to the payer (PayPal sandbox refund ${r.id}).`);
   } catch (e) {
     await logActivity({ platform: ctx.platform, chatId: ctx.chatId, userId: ctx.userId, action: p.action, escrowId: escrow.id, ok: false, note: errMsg(e) });
     return { text: `${p.action} failed: ${errMsg(e)}` };
   }
+}
+
+/** Group gets the token-free receipt summary; the payer gets a DM with their private receipt link. */
+async function withReceipt(e: EscrowRecord, kind: "funding" | "payout" | "refund", head: string): Promise<Reply> {
+  const m = await receiptMessages(e, kind);
+  if (!m) return { text: head };
+  return { text: `${head}\n\n${m.group}`, dm: m.payerChatUserId ? { text: m.dm, to: m.payerChatUserId } : undefined };
 }
 
 /** act:<action>:<escrowId> buttons (non-money shortcuts that re-run the command for the presser). */

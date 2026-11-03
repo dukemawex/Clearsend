@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { notifyReceipt } from "@/lib/chatbots/notify";
 import { refundEscrow, getEscrow } from "@/lib/escrow";
 import { verifyEscrowToken, type EscrowRole } from "@/lib/escrow-links";
 import { refundCapture } from "@/lib/paypal";
@@ -53,7 +54,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Refund ID not found in PayPal response" }, { status: 500 });
     }
     
-    const updated = await refundEscrow(escrowId, refundId);
+    const updated = await refundEscrow(escrowId, refundId, refundResult.status as string | undefined);
+    await notifyReceipt(updated, "refund");
     return NextResponse.json(updated);
   } catch (error) {
     if (error instanceof z.ZodError) {

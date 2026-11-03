@@ -31,8 +31,8 @@ async function send(ctx: Ctx, r: Reply, replyTo?: number) {
   const chatId = ctx.chatId;
   await tg("sendMessage", { chat_id: chatId, text: r.text.slice(0, 4000), reply_markup: markup(r), disable_web_page_preview: true, ...(replyTo ? { reply_parameters: { message_id: replyTo, allow_sending_without_reply: true } } : {}) });
   if (r.dm) {
-    const dm = await tg("sendMessage", { chat_id: Number(ctx.userId), text: r.dm.text.slice(0, 4000), reply_markup: markup({ text: "", buttons: r.dm.buttons }), disable_web_page_preview: true });
-    if (!dm.ok && chatId !== ctx.userId) {
+    const dm = await tg("sendMessage", { chat_id: Number(r.dm.to ?? ctx.userId), text: r.dm.text.slice(0, 4000), reply_markup: markup({ text: "", buttons: r.dm.buttons }), disable_web_page_preview: true });
+    if (!dm.ok && chatId !== (r.dm.to ?? ctx.userId)) {
       // User hasn't opened a DM with the bot: fall back to the group, without private links.
       const publicButtons = r.dm.buttons?.filter((b) => b.url && b.url.includes("paypal.com"));
       if (publicButtons?.length) await tg("sendMessage", { chat_id: chatId, text: "I couldn't DM you (open a private chat with me and press Start). PayPal sandbox approval link:", reply_markup: markup({ text: "", buttons: publicButtons }) });

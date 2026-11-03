@@ -65,7 +65,7 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
     }
 
     // Step 3: Update trip with payment info
-    await markPaymentApproved(id, orderId, captureId);
+    await markPaymentApproved(id, orderId, captureId, undefined, capture.purchase_units?.[0]?.payments?.captures?.[0]?.status as string | undefined);
     await markTicketing(id);
 
     // Step 4: For Duffel provider, create airline order

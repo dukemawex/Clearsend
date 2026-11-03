@@ -18,7 +18,7 @@ const PARTIES = [
   { role: "Payer", icon: "💳", text: "Asks the agent for a flight or opens an escrow, types the yes that creates the PayPal order, approves it in PayPal, and types the amount to release." },
   { role: "Recipient", icon: "📦", text: "Delivers the work (text or a document). Gets paid by PayPal Payout to any supported country. Can never release to themselves." },
   { role: "Verifier", icon: "🛡️", text: "Reads the AI verdict criterion by criterion and confirms, or flags it so the payer can refund." },
-  { role: "ClearSend agent", icon: "✦", text: "Free model via OpenRouter, on the web, Telegram and Discord. Searches, quotes, creates orders and verifies. Never moves money without a human yes." },
+  { role: "ClearSend agent", icon: "✦", text: "Free model via OpenRouter, on the web and in Telegram. Searches, quotes, creates orders and verifies. Never moves money without a human yes." },
 ];
 
 export default async function Home() {
@@ -40,7 +40,7 @@ export default async function Home() {
       <div className="space-y-14">
         <section className="grid items-center gap-10 lg:grid-cols-[1.1fr_1fr]">
           <div className="cs-rise">
-            <Badge tone="acc">AI agent · PayPal sandbox · Web, Telegram, Discord</Badge>
+            <Badge tone="acc">AI agent · PayPal sandbox · Web, Telegram</Badge>
             <div className="mt-5"><ClearSendLogo /></div>
             <h1 className="mt-4 text-4xl font-extrabold leading-[1.05] tracking-tight sm:text-6xl" style={{ letterSpacing: "-0.04em" }}>
               One room for the payer, the recipient, the verifier and <span className="c-acc">the agent</span>.
@@ -50,7 +50,7 @@ export default async function Home() {
               <ButtonLink href="/agent">Talk to the agent</ButtonLink>
               <ButtonLink href="/plan" variant="ghost">Plan a trip</ButtonLink>
               <ButtonLink href="/escrow/new" variant="ghost">Open an escrow</ButtonLink>
-              <ButtonLink href="/chat-bots" variant="ghost">Add to Telegram / Discord</ButtonLink>
+              <ButtonLink href="/chat-bots" variant="ghost">Add to Telegram</ButtonLink>
             </div>
           </div>
           <Card className="cs-rise">

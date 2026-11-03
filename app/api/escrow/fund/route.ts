@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { notifyReceipt } from "@/lib/chatbots/notify";
 import { fundEscrow, getEscrow } from "@/lib/escrow";
 import { captureOrder, createOrder } from "@/lib/paypal";
 import { z } from "zod";
@@ -45,7 +46,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Capture ID not found in PayPal response" }, { status: 500 });
     }
     
-    const updated = await fundEscrow(escrowId, finalOrderId, captureId);
+    const updated = await fundEscrow(escrowId, finalOrderId, captureId, (captureResult.purchase_units?.[0]?.payments?.captures?.[0]?.status as string | undefined) ?? (captureResult.status as string | undefined));
+    await notifyReceipt(updated, "funding");
     return NextResponse.json(updated);
   } catch (error) {
     if (error instanceof z.ZodError) {
