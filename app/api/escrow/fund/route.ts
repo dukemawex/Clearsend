@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { notifyReceipt } from "@/lib/chatbots/notify";
 import { fundEscrow, getEscrow } from "@/lib/escrow";
-import { captureOrder, createOrder } from "@/lib/paypal";
+import { captureErrorMessage, captureOrder, createOrder, PayPalError } from "@/lib/paypal";
 import { z } from "zod";
 
 const FundEscrowSchema = z.object({
@@ -29,7 +29,7 @@ export async function POST(request: NextRequest) {
       });
       finalOrderId = order.id as string;
       const links = order.links as Array<{ rel: string; href: string }> | undefined;
-      const approveUrl = links?.find((l) => l.rel === "approve")?.href;
+      const approveUrl = links?.find((l) => l.rel === "payer-action" || l.rel === "approve")?.href;
       
       return NextResponse.json({
         orderId: finalOrderId,
@@ -54,6 +54,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Invalid input", details: error.issues }, { status: 400 });
     }
     console.error("escrow_fund_error", error);
+    if (error instanceof PayPalError) return NextResponse.json({ error: captureErrorMessage(error), retry: true }, { status: error.status >= 400 && error.status < 500 ? 422 : 502 });
     return NextResponse.json({ error: error instanceof Error ? error.message : "Failed to fund escrow" }, { status: 500 });
   }
 }

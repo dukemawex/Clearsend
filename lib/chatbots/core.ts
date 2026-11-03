@@ -1,19 +1,21 @@
 // Platform-neutral escrow bot logic used by the Telegram bot.
 // Reuses lib/escrow, lib/escrow-links, lib/fx, lib/paypal, lib/documents and the shared verifier.
 import { randomBytes } from "crypto";
-import { attachEscrowDocument, createEscrow, fundEscrow, getEscrow, refundEscrow, releaseEscrow, submitDeliverable, verifyDeliverable, type EscrowRecord } from "@/lib/escrow";
+import { attachEscrowDocument, payoutReceiver, createEscrow, fundEscrow, getEscrow, refundEscrow, releaseEscrow, submitDeliverable, verifyDeliverable, type EscrowRecord } from "@/lib/escrow";
 import { createEscrowLink, verifyEscrowToken } from "@/lib/escrow-links";
 import { getMidMarketRate } from "@/lib/fx";
-import { captureOrder, createOrder, createPayout, refundCapture } from "@/lib/paypal";
-import { extractDocument } from "@/lib/documents";
+import { captureErrorMessage, captureOrder, createOrder, createPayout, refundCapture } from "@/lib/paypal";
+import { extractDocument, type ExtractedDocument } from "@/lib/documents";
+import { checkPayoutEligibility, PAYOUT_COUNTRIES, PAYOUT_CURRENCIES } from "@/lib/payout-countries";
+import { extractSpec, specToText, type StructuredSpec } from "@/lib/spec";
 import { evaluateEscrow } from "@/lib/verifier";
 import { del, getJSON, k, logActivity, setJSON, once } from "./store";
 import { confirmPhrase, isEmail, isEscrowId, isInviteCode, parseInlineEscrow, parseQuote, parseRoleLink, phraseMatches, quoteBreakdown, roleAllowed, type Role } from "./parse";
 import { recordActivity } from "@/lib/activity";
 import { receiptMessages } from "./notify";
 
-function botLog(ctx: Pick<Ctx, "platform" | "userName" | "isGroup">, subject: string | undefined, summary: string) {
-  return recordActivity({ kind: "chat", subject: subject || `${ctx.platform}-chat`, actor: `${ctx.platform}:${ctx.userName}`, summary: `${summary} (${ctx.platform}${ctx.isGroup ? " group" : " DM"})` });
+function botLog(ctx: Pick<Ctx, "platform" | "userName" | "isGroup"> & { chatId?: string }, subject: string | undefined, summary: string) {
+  return recordActivity({ ownerId: ctx.chatId ? `${ctx.platform}:${ctx.chatId}` : undefined, kind: "chat", subject: subject || `${ctx.platform}-chat`, actor: `${ctx.platform}:${ctx.userName}`, summary: `${summary} (${ctx.platform}${ctx.isGroup ? " group" : " DM"})` });
 }
 
 export type Platform = "telegram";
@@ -95,19 +97,19 @@ export async function quote(args: string): Promise<Reply> {
 }
 
 // ---------- create (inline or guided) ----------
-type Draft = { amount?: number; currency?: string; recipient?: string; recipientEmail?: string; recipientCountry?: string; specification?: string; payerEmail?: string };
+type Draft = { recipientPhone?: string; amount?: number; currency?: string; recipient?: string; recipientEmail?: string; recipientCountry?: string; specification?: string; payerEmail?: string; structuredSpec?: StructuredSpec; specDocument?: ExtractedDocument; pendingSpec?: StructuredSpec };
 const STEPS: Array<{ field: keyof Draft; ask: string }> = [
   { field: "amount", ask: "How much should go into escrow? Reply with amount and currency, e.g. 150 USD." },
   { field: "recipient", ask: "Who is being paid? Reply with their name." },
-  { field: "recipientEmail", ask: "What is the recipient's PayPal email (sandbox)? Payouts are sent there on release." },
-  { field: "recipientCountry", ask: "Which country is the recipient in? (e.g. NG, GH, KE, GB)" },
-  { field: "specification", ask: "Describe what must be delivered (the spec the AI verifier will check against)." },
+  { field: "recipientEmail", ask: "What is the recipient's PayPal email or phone (+country code, sandbox)? PayPal Payouts sends to their PayPal account on release; they withdraw to their local bank from PayPal." },
+  { field: "recipientCountry", ask: "Which country is the recipient's PayPal account in? 2-letter code from PayPal's Payouts list (e.g. KE, ZA, GB, US). Nigeria and Ghana are not on PayPal's Payouts list." },
+  { field: "specification", ask: "Describe what must be delivered (the spec the AI verifier will check against). Or send a spec document (PDF, DOCX or TXT) and I'll extract the deliverables and acceptance criteria for you to confirm." },
   { field: "payerEmail", ask: "Your PayPal email (sandbox), for the funding receipt. Tip: reply in a DM with the bot if you prefer not to share it in the group." },
 ];
 const draftKey = (ctx: Ctx) => k("draft", ctx.platform, ctx.chatId, ctx.userId);
 export async function hasDraft(ctx: Ctx) { return !!(await getJSON<Draft>(draftKey(ctx))); }
 
-function nextStep(d: Draft) { return STEPS.find((s) => d[s.field] === undefined || (s.field === "amount" && !d.currency)); }
+function nextStep(d: Draft) { if (d.pendingSpec) return undefined; return STEPS.find((s) => d[s.field] === undefined || (s.field === "amount" && !d.currency)); }
 
 export async function startCreate(ctx: Ctx, args: string): Promise<Reply> {
   let d: Draft = {};
@@ -119,33 +121,75 @@ export async function startCreate(ctx: Ctx, args: string): Promise<Reply> {
   return continueDraft(ctx, d);
 }
 
+function specCard(sp: StructuredSpec): string {
+  const out = ["Here is what I understood from your document. Confirm or edit:", specToText(sp) || "(no clear spec found)"];
+  if (sp.injectionDetected) out.push("⚠️ The document contains instructions aimed at the AI or payment system. I ignored them.");
+  if (!sp.clearSpec) out.push("The document doesn't clearly state a spec, so I didn't invent anything.");
+  if (sp.ambiguities.length) out.push("Unclear:\n" + sp.ambiguities.map((a) => `- ${a}`).join("\n"));
+  out.push(sp.clearSpec ? "Reply YES to use this spec, or type the corrected spec (deliverables and criteria) to use your text instead." : "Please type what's missing (what must be delivered and how to check it). Reply YES only if you want to use it as-is.");
+  return out.join("\n\n");
+}
+
+/** Payer sent a spec document while creating an escrow: extract text, then a structured spec to confirm. */
+export async function draftSpecDocument(ctx: Ctx, doc: IncomingDoc): Promise<Reply> {
+  const d = await getJSON<Draft>(draftKey(ctx));
+  if (!d) return { text: "Start an escrow with /escrow first, then send the spec document.", ephemeral: true };
+  const extracted = await extractDocument(new File([doc.bytes], doc.name, { type: doc.mime }));
+  if (!extracted.text.trim()) return { text: `I couldn't read text from ${extracted.name}${extracted.note ? ` (${extracted.note})` : ""}. Please type the spec instead.`, forceReply: true };
+  const { spec } = await extractSpec(extracted.name, extracted.text);
+  d.specDocument = extracted; d.pendingSpec = spec;
+  if (!d.amount && spec.amount && spec.currency) { d.amount = spec.amount; d.currency = spec.currency; }
+  if (!d.recipient && spec.recipientName) d.recipient = spec.recipientName.slice(0, 80);
+  await setJSON(draftKey(ctx), d, 1800);
+  return { text: specCard(spec), forceReply: true };
+}
+
 async function continueDraft(ctx: Ctx, d: Draft): Promise<Reply> {
+  if (d.pendingSpec) { await setJSON(draftKey(ctx), d, 1800); return { text: specCard(d.pendingSpec), forceReply: true }; }
   const step = nextStep(d);
   if (step) { await setJSON(draftKey(ctx), d, 1800); return { text: step.ask, forceReply: true }; }
   await del(draftKey(ctx));
-  return finishCreate(ctx, d as Required<Draft>);
+  return finishCreate(ctx, d as Required<Pick<Draft, "amount" | "currency" | "recipient" | "recipientEmail" | "recipientCountry" | "specification" | "payerEmail">> & Draft);
 }
 
 /** Free text answer while a draft is open. */
 export async function answerDraft(ctx: Ctx, text: string): Promise<Reply> {
   const d = (await getJSON<Draft>(draftKey(ctx))) ?? {};
-  const step = nextStep(d);
-  if (!step) return continueDraft(ctx, d);
   const t = text.trim();
   if (/^(cancel|stop)$/i.test(t)) { await del(draftKey(ctx)); return { text: "Escrow setup cancelled." }; }
+  if (d.pendingSpec) {
+    if (/^(yes|y|confirm|ok)$/i.test(t)) { d.structuredSpec = d.pendingSpec; d.specification = specToText(d.pendingSpec).slice(0, 2000) || d.specification; }
+    else { if (t.length < 5) return { text: "Please type the spec, or reply YES to use the extracted one.", forceReply: true }; d.specification = t.slice(0, 2000); d.structuredSpec = undefined; }
+    delete d.pendingSpec;
+    return continueDraft(ctx, d);
+  }
+  const step = nextStep(d);
+  if (!step) return continueDraft(ctx, d);
   switch (step.field) {
     case "amount": {
       const m = /^(\d+(?:[.,]\d{1,2})?)\s*([A-Za-z]{3})$/.exec(t);
       const amt = m ? Number(m[1].replace(",", ".")) : NaN;
       if (!m || !(amt > 0) || amt > 100000) return { text: "Please reply like: 150 USD", forceReply: true };
+      if (!(PAYOUT_CURRENCIES as readonly string[]).includes(m[2].toUpperCase())) return { text: `PayPal Payouts can't send ${m[2].toUpperCase()}. Use one of: ${PAYOUT_CURRENCIES.join(", ")} (the recipient gets it converted in PayPal).`, forceReply: true };
       d.amount = amt; d.currency = m[2].toUpperCase(); break;
     }
-    case "recipientEmail": case "payerEmail":
+    case "recipientEmail": {
+      const ph = t.replace(/[\s()-]/g, "");
+      if (/^\+[1-9]\d{6,14}$/.test(ph)) { d.recipientPhone = ph; d.recipientEmail = ""; break; }
+      if (!isEmail(t)) return { text: "Reply with a PayPal email, or a phone like +254712345678 (or reply cancel).", forceReply: true };
+      d.recipientEmail = t.toLowerCase(); break;
+    }
+    case "payerEmail":
       if (!isEmail(t)) return { text: "That doesn't look like an email. Try again (or reply cancel).", forceReply: true };
       d[step.field] = t.toLowerCase(); break;
     case "recipientCountry":
-      if (!/^[A-Za-z][A-Za-z .'-]{1,40}$/.test(t)) return { text: "Please reply with a country name or 2-letter code.", forceReply: true };
-      d.recipientCountry = t.length === 2 ? t.toUpperCase() : t; break;
+    {
+      const code = t.length === 2 ? t.toUpperCase() : Object.entries(PAYOUT_COUNTRIES).find(([, n]) => n.toLowerCase() === t.toLowerCase())?.[0];
+      if (!code) return { text: "Please reply with a 2-letter code from PayPal's Payouts country list (e.g. KE, ZA, GB).", forceReply: true };
+      const el = checkPayoutEligibility(code, d.currency ?? "USD");
+      if (!el.ok) return { text: `${el.error}\nReply with another country, or cancel.`, forceReply: true };
+      d.recipientCountry = code; break;
+    }
     default:
       if (t.length < 2) return { text: "Please give a bit more detail.", forceReply: true };
       (d as Record<string, unknown>)[step.field] = t.slice(0, step.field === "specification" ? 2000 : 80);
@@ -155,8 +199,8 @@ export async function answerDraft(ctx: Ctx, text: string): Promise<Reply> {
 
 export async function createFromFields(ctx: Ctx, d: Draft): Promise<Reply> { return continueDraft(ctx, d); }
 
-async function finishCreate(ctx: Ctx, d: Required<Draft>): Promise<Reply> {
-  const escrow = await createEscrow({ payer: ctx.userName.slice(0, 80), payerEmail: d.payerEmail, recipient: d.recipient, recipientEmail: d.recipientEmail, recipientCountry: d.recipientCountry, amount: d.amount, currency: d.currency, specification: d.specification });
+async function finishCreate(ctx: Ctx, d: Required<Pick<Draft, "amount" | "currency" | "recipient" | "recipientEmail" | "recipientCountry" | "specification" | "payerEmail">> & Draft): Promise<Reply> {
+  const escrow = await createEscrow({ payer: ctx.userName.slice(0, 80), payerEmail: d.payerEmail, recipient: d.recipient, recipientEmail: d.recipientEmail || undefined, recipientPhone: d.recipientPhone, recipientType: d.recipientPhone ? "PHONE" : "EMAIL", recipientCountry: d.recipientCountry, amount: d.amount, currency: d.currency, specification: d.specification, structuredSpec: d.structuredSpec, acceptanceCriteria: d.structuredSpec?.acceptanceCriteria, specDocument: d.specDocument, ownerId: `${ctx.platform}:${ctx.chatId}` });
   await bindRole(escrow.id, "payer", ctx);
   await linkChat(ctx, escrow.id);
   await logActivity({ platform: ctx.platform, chatId: ctx.chatId, userId: ctx.userId, action: "create", escrowId: escrow.id, ok: true });
@@ -248,6 +292,12 @@ async function guard(ctx: Ctx, escrow: EscrowRecord, action: string): Promise<Re
 }
 
 // ---------- fund ----------
+const SANDBOX_HINT = [
+  "This is the PayPal SANDBOX: real PayPal logins and real cards don't work, and you can't sign up for a new account there.",
+  process.env.SANDBOX_BUYER_EMAIL && process.env.PAYPAL_ENV !== "live" ? `Log in with the test buyer: ${process.env.SANDBOX_BUYER_EMAIL} (the password is shown on the escrow funding step on the web).` : `Use a PayPal sandbox personal account, or pay as guest with a PayPal sandbox test card if PayPal offers it.`,
+  "If PayPal offers \"Pay with Debit or Credit Card\", a documented sandbox test card such as Visa 4012 8888 8888 1881 with any future expiry and any 3-digit CVV can work; PayPal decides whether that option is shown.",
+].join("\n");
+
 export async function fund(ctx: Ctx, idArg?: string): Promise<Reply> {
   await botLog(ctx, idArg, "asked to fund the escrow with PayPal");
   const escrow = await resolveEscrow(ctx, idArg);
@@ -270,7 +320,7 @@ export async function fund(ctx: Ctx, idArg?: string): Promise<Reply> {
   return {
     text: `Pay ${money(escrow.amount, escrow.currency)} into escrow ${escrow.id}.\n1) Open the PayPal approval link (sent to you privately) and approve with your sandbox buyer account.\n2) Press "I approved" to capture. Nothing is charged until you approve in PayPal.`,
     buttons: [{ label: "I approved: capture into escrow", id: `c:${nonce}`, style: "success" }],
-    dm: { text: `PayPal sandbox approval for escrow ${escrow.id}: ${money(escrow.amount, escrow.currency)}. PayPal order ${order.orderId}.`, buttons },
+    dm: { text: `PayPal sandbox approval for escrow ${escrow.id}: ${money(escrow.amount, escrow.currency)}. PayPal order ${order.orderId}.\n${SANDBOX_HINT}`, buttons },
   };
 }
 
@@ -368,7 +418,7 @@ export async function submitPhrase(ctx: Ctx, nonce: string, typed: string): Prom
 }
 
 async function execute(ctx: Ctx, nonce: string, p: Pending): Promise<Reply> {
-  await recordActivity({ kind: "confirmation", subject: p.escrowId, actor: `${ctx.platform}:${ctx.userName}`, summary: `Confirmed ${p.action} in ${ctx.platform}${p.phrase ? " by typing the exact phrase" : " with a button"}.` });
+  await recordActivity({ ownerId: `${ctx.platform}:${ctx.chatId}`, kind: "confirmation", subject: p.escrowId, actor: `${ctx.platform}:${ctx.userName}`, summary: `Confirmed ${p.action} in ${ctx.platform}${p.phrase ? " by typing the exact phrase" : " with a button"}.` });
   if (!(await once(k("done", nonce), DAY))) return { text: "Already handled.", ephemeral: true };
   await del(k("confirm", nonce));
   const escrow = await getEscrow(p.escrowId);
@@ -389,7 +439,8 @@ async function execute(ctx: Ctx, nonce: string, p: Pending): Promise<Reply> {
     }
     if (p.action === "release") {
       if (escrow.state !== "verified" || !escrow.evaluationResult?.met) return { text: `Escrow is ${escrow.state}; release needs AI verification.` };
-      const payout = await createPayout({ recipientEmail: escrow.recipientEmail || escrow.recipientPayerId!, amount: escrow.amount, currency: escrow.currency, note: `ClearSend Escrow Release: ${escrow.specification.slice(0, 100)}` });
+      const rcv = payoutReceiver(escrow); if (!rcv) return { text: "No recipient PayPal email/phone/ID on this escrow." };
+      const payout = await createPayout({ ...rcv, amount: escrow.amount, currency: escrow.currency, note: `ClearSend Escrow Release: ${escrow.specification.slice(0, 100)}` });
       const batchId = payout.batch_header?.payout_batch_id as string | undefined;
       if (!batchId) throw new Error("PayPal returned no payout batch id");
       const released = await releaseEscrow(escrow.id, batchId, payout.items?.[0]?.payout_item_id, payout.batch_header?.batch_status);
@@ -403,6 +454,7 @@ async function execute(ctx: Ctx, nonce: string, p: Pending): Promise<Reply> {
     return withReceipt(refunded, "refund", `Refunded ${money(escrow.amount, escrow.currency)} to the payer (PayPal sandbox refund ${r.id}).`);
   } catch (e) {
     await logActivity({ platform: ctx.platform, chatId: ctx.chatId, userId: ctx.userId, action: p.action, escrowId: escrow.id, ok: false, note: errMsg(e) });
+    if (p.action === "capture") return { text: `${captureErrorMessage(e)}\nRun fund again to get a fresh "I approved" button (the same PayPal order is reused until it expires).`, buttons: [{ label: "Fund again", id: `act:fund:${escrow.id}` }] };
     return { text: `${p.action} failed: ${errMsg(e)}` };
   }
 }

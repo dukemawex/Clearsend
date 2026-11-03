@@ -11,7 +11,7 @@ ClearSend is an AI agent for worldwide journeys: send money across borders with 
 
 ---
 
-## Judge quick start
+## Quick start for reviewers
 
 ### Golden prompts (working with UI chips)
 
@@ -109,6 +109,40 @@ ClearSend's home page (`/`) is the **Room**: a live activity feed, a 9-step work
 - **Verifier:** `/api/escrow/verify` fences spec and deliverable text as untrusted, tells the model to flag injection attempts, and rejects deliverables with no readable text.
 - **Extraction:** `unpdf` for PDFs (text layer only, scans give no text), `mammoth` for DOCX, UTF-8 for TXT, `tesseract.js` OCR for images. OCR downloads its language data at runtime; if that fails on the serverless function the UI says so and asks for a text format.
 
+## Paying in the PayPal sandbox (testers)
+
+ClearSend uses PayPal's **sandbox**, so the checkout only accepts sandbox test accounts or sandbox test cards. Real PayPal logins and real cards fail, and there is no public sign-up inside the sandbox. ClearSend shows a "Sandbox test payment" panel before redirecting, on the funding step only (escrow funding and trip payment; the app has no setup/help pages, this README is the setup guide), and the Telegram approval DM carries the same hint.
+
+- **Test buyer login:** set `SANDBOX_BUYER_EMAIL` and `SANDBOX_BUYER_PASSWORD` (a throwaway sandbox Personal account) in Vercel. They are shown with copy buttons only while `PAYPAL_ENV` is unset or `sandbox`.
+- **Create a sandbox buyer:** log in at <https://developer.paypal.com/dashboard/accounts>, click **Create account**, choose **Personal**, pick a country, then open the account's ⋮ menu → **View/Edit account** to read or set its email and password.
+- **Guest card:** orders are created with `payment_source.paypal.experience_context` (`landing_page: GUEST_CHECKOUT`, `user_action: PAY_NOW`, `shipping_preference: NO_SHIPPING`). Where PayPal shows "Pay with Debit or Credit Card", a documented sandbox test card such as Visa `4012 8888 8888 1881` with any future expiry and CVV can be tried ([card testing docs](https://developer.paypal.com/tools/sandbox/card-testing/)). PayPal decides whether the guest option appears. Set `PAYPAL_EXPERIENCE=legacy` to revert to `application_context`.
+- **Resilience:** cancelling returns to `/paypal/cancel` with a retry link; capture errors (`ORDER_NOT_APPROVED`, `INSTRUMENT_DECLINED`, expired orders) are mapped to clear next steps with Retry capture / Start funding again.
+
+## Cross-border payouts (PayPal Payouts, sandbox)
+
+Escrow release sends a **PayPal Payout** to the recipient's **PayPal account** identified by `EMAIL`, `PHONE` (E.164, e.g. `+254712345678`) or `PAYPAL_ID` (`recipient_type` in the [Payouts API](https://developer.paypal.com/docs/api/payments.payouts-batch/v1/)). The country list and currencies are taken from PayPal's [Payouts country and currency availability](https://developer.paypal.com/docs/payouts/standard/reference/country-feature/) page and encoded in `lib/payout-countries.ts`; web (`/escrow/new` selects), the agent `createEscrow` tool and Telegram (`/escrow` country step) all validate against it and return a clear error for unsupported countries or currencies.
+
+Honest limitations:
+- **Not every country.** Countries missing from PayPal's list cannot receive payouts. **Nigeria (NG) and Ghana (GH) are not on PayPal's Payouts list**, so ClearSend rejects them instead of pretending.
+- **PayPal accounts only, no direct bank payouts.** Money lands in the recipient's PayPal balance; they withdraw to their local bank (or card) from PayPal where PayPal supports it.
+- **Currency.** ClearSend pays in the escrow currency (one of PayPal's payout currencies). Some countries on the list can only receive USD. The FX quote shown to all parties (`receiveCurrency`) is indicative; PayPal converts with its own rate and spread.
+- **Unclaimed payouts.** If the email/phone has no PayPal account, the item is `UNCLAIMED`; PayPal notifies the recipient and **returns the funds to the sender after 30 days** if not claimed. The escrow page refreshes the payout status and explains `UNCLAIMED`, `RETURNED`, `FAILED`, `BLOCKED` and `ONHOLD`.
+- **Sandbox only.** No real money moves.
+
+## Privacy: per-visitor data (no sign-up)
+
+Each browser gets a random, unguessable anonymous id (`cs_uid`, 128-bit, `httpOnly`, `Secure` on HTTPS, `SameSite=Lax`, 1-year expiry) issued by `middleware.ts`. Escrows, trips, receipts and activity created from the web or the agent chat are stamped with `ownerId`. `/escrow`, `/trips`, `/api/escrow/list`, `/api/trips/list`, `/api/activity`, the home Room and the agent `listEscrows`/`getEscrow` tools return only the caller's own records.
+
+- A specific escrow is still opened with its signed **role link** (`?role=&token=`); no token → 401, wrong token → 403. A visitor who opens a valid role link gets that one escrow in their own "shared with you" list (stored server-side as `shared:<cs_uid>`). Receipts stay token-gated.
+- Trips are visible only to the browser that created them (`GET /api/trips/:id` returns 404 to anyone else).
+- Telegram escrows are owned by `telegram:<chatId>`; they never appear in any browser's lists. MCP agent tools run as `mcp:service` and never see browser or Telegram records; without `CLEAR_SEND_API_KEY` configured, MCP data tools return 401.
+- **Legacy records** created before this change have no `ownerId` and are hidden from every visitor (not deleted; still reachable by role link or the service key).
+- **History lives with the browser.** Clearing cookies or switching devices starts an empty list; open your role links to bring escrows back as "shared with you". There is no account sign-in yet.
+
+## AI spec extraction from documents
+
+`POST /api/spec/extract` (multipart `file`, or JSON `{name,text}`; zod-validated; 8 requests/min per IP) reads the document and asks the free OpenRouter model (`OPENROUTER_MODEL`, then `OPENROUTER_FALLBACK_MODELS`, default `google/gemma-4-31b-it:free,nvidia/nemotron-3.5-lightning:free`) for a structured spec: title, summary, deliverables, measurable acceptance criteria, deadline, amount/currency/recipient if stated, and ambiguities. The document is fenced as untrusted data; injected instructions are flagged and never become criteria; vague documents return `clearSpec: false` with what is missing. The payer reviews and edits it ("Here is what I understood: confirm or edit") before the escrow is created on `/escrow/new`, from the agent chat ("Use as escrow spec" on an attachment) or in Telegram (send the document during `/escrow`). The confirmed spec is stored as `structuredSpec`, shown on every role page and given to the verifier with the original document text.
+
 ## Payment receipts
 
 Every real PayPal sandbox event issues a receipt, persisted on the escrow or trip record at that moment (`receipts[]`): funding capture, release payout and refund (trips: payment capture and auto-refund). Fields: receipt number, escrow/trip id, time in UTC and Lagos (WAT), payer, recipient, amount, currency, fee (2.5% escrow; trips use their stored 3% service fee), live FX mid-market rate, 1.2% spread and destination amount (quote at event time, when the recipient country maps to a currency), PayPal order id, capture id, payout batch/item id or refund id, PayPal status, and the label "PayPal Sandbox - test payment, no real money". Nothing is seeded.
@@ -121,7 +155,7 @@ Every real PayPal sandbox event issues a receipt, persisted on the escrow or tri
 
 ## Use ClearSend in Telegram
 
-Add ClearSend to a Telegram group and run the same PayPal-backed escrow in the conversation. The bot is serverless: Telegram uses a webhook (`POST /api/telegram/webhook`). No long-running bot process. Setup steps and add-to-chat links are also on the in-app page `/chat-bots`.
+Add ClearSend to a Telegram group and run the same PayPal-backed escrow in the conversation. The bot is serverless: Telegram uses a webhook (`POST /api/telegram/webhook`). No long-running bot process. The in-app `/chat-bots` page only shows add-to-chat links; setup lives in this README.
 
 **Flow:** payer creates the escrow (becomes payer) -> recipient/verifier join with an invite code or their ClearSend role link (roles bound to the chat user id) -> payer funds via a PayPal sandbox approval link (sent privately) and presses "I approved" to capture -> recipient submits text or a file (PDF/DOCX/TXT/image, read by `lib/documents.ts`) -> AI verifier (`lib/verifier.ts`, free OpenRouter/NVIDIA model, documents treated as untrusted) -> payer presses **Confirm release** and types exactly `RELEASE <amount> <CUR>` -> PayPal Payout. Refund (payer or verifier) needs `REFUND <amount> <CUR>`.
 
@@ -505,7 +539,7 @@ x-clearsend-api-key: <your-key>
 4. Separate approval for payout and order
 5. PayPal Activity Panel tracks all operations
 
-For a complete walkthrough with architecture diagrams and detailed sandbox instructions, visit `/judges` in your browser.
+The architecture, sandbox walkthrough and setup previously on an in-app `/judges` page now live only in this README; `/judges` and `/paypal/help` return 404.
 
 ### ✅ What Makes This PayPal + AI
 

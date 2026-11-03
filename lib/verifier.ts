@@ -3,6 +3,7 @@ import { generateObject } from "ai";
 import { z } from "zod";
 import { wrapUntrusted, UNTRUSTED_GUARD } from "@/lib/documents";
 import type { EscrowRecord } from "@/lib/escrow";
+import { specToText } from "@/lib/spec";
 
 const EvaluationResultSchema = z.object({
   met: z.boolean(),
@@ -46,7 +47,7 @@ export async function evaluateEscrow(escrow: EscrowRecord): Promise<NonNullable<
 
   const prompt = `Specification (payer, untrusted):
 ${wrapUntrusted("specification", escrow.specification)}
-${specDocs.length ? `\nSpec documents uploaded by payer:\n${block(specDocs)}` : ""}
+${escrow.structuredSpec ? `\nStructured spec confirmed by the payer before funding (AI-extracted from their document, then reviewed/edited by the payer; untrusted):\n${wrapUntrusted("confirmed_structured_spec", specToText(escrow.structuredSpec))}\n` : ""}${specDocs.length ? `\nSpec documents uploaded by payer:\n${block(specDocs)}` : ""}
 
 ${escrow.acceptanceCriteria && escrow.acceptanceCriteria.length > 0 ? `Acceptance Criteria:\n${escrow.acceptanceCriteria.map((c, i) => `${i + 1}. ${c}`).join("\n")}` : ""}
 

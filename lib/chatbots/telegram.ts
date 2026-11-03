@@ -100,6 +100,10 @@ export async function handleUpdate(update: TgUpdate): Promise<(() => Promise<voi
 
   try {
     if (!parsed) {
+      if ((msg.document || msg.photo?.length) && (await core.hasDraft(ctx))) {
+        const doc = await downloadDoc(msg);
+        if (doc) { await send(ctx, { text: "Reading your spec document and extracting deliverables and criteria (free OpenRouter model)…" }, msg.message_id); return async () => { try { await send(ctx, await core.draftSpecDocument(ctx, doc)); } catch (e) { await send(ctx, { text: `Couldn't extract a spec: ${core.errMsg(e)}. Please type the spec instead.` }); } }; }
+      }
       if (!text) return undefined;
       const nonce = await core.awaitingPhrase(ctx);
       if (nonce) { await send(ctx, await core.submitPhrase(ctx, nonce, text), msg.message_id); return undefined; }

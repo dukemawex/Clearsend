@@ -6,7 +6,7 @@ import { buildReceipt, parseReceiptId, receiptId, receiptText, formatLagos, form
 const FIXTURE = {
   kind: "funding" as const, subjectType: "escrow" as const, subjectId: "escrow_1700000000000_testfix01",
   issuedAt: Date.UTC(2026, 10, 3, 4, 30, 0),
-  payer: "TEST payer", payerEmail: "test-payer@example.com", recipient: "TEST recipient", recipientCountry: "NG",
+  payer: "TEST payer", payerEmail: "test-payer@example.com", recipient: "TEST recipient", recipientCountry: "KE",
   amount: 100, currency: "USD", fx: { destinationCurrency: "NGN", midMarketRate: 1500, source: "test-fixture" },
   paypal: { orderId: "TEST-ORDER", captureId: "TEST-CAPTURE", payoutBatchId: undefined },
   status: "COMPLETED",
@@ -53,7 +53,7 @@ test("receipt access: 401 without token, 403 wrong token, 404 when no receipt st
   const { loadReceipt } = await import("../lib/receipt-access");
   const { createEscrow } = await import("../lib/escrow");
   const { signEscrowToken } = await import("../lib/escrow-links");
-  const e = await createEscrow({ payer: "TEST", payerEmail: "t@example.com", recipient: "R", recipientCountry: "NG", amount: 5, currency: "USD", specification: "test" });
+  const e = await createEscrow({ payer: "TEST", payerEmail: "t@example.com", recipient: "R", recipientCountry: "KE", amount: 5, currency: "USD", specification: "test" });
   const id = receiptId("funding", e.id);
   assert.equal((await loadReceipt(id, {})).status, 401);
   assert.equal((await loadReceipt(id, { role: "payer", token: "bad" })).status, 403);

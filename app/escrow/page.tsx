@@ -1,14 +1,16 @@
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
+import { currentOwner } from "@/lib/owner";
 import { listEscrows, type EscrowRecord } from "@/lib/escrow";
+import { createEscrowLink } from "@/lib/escrow-links";
 
 export const dynamic = "force-dynamic";
 
 export default async function EscrowDashboardPage() {
-  let escrows: EscrowRecord[];
+  let escrows: (EscrowRecord & { sharedRole?: "payer" | "recipient" | "verifier" })[];
   try {
-    escrows = await listEscrows();
+    escrows = await listEscrows(await currentOwner());
   } catch {
     escrows = [];
   }
@@ -34,6 +36,7 @@ export default async function EscrowDashboardPage() {
           <p className="text-gray-600">
             Secure payments with deliverable verification
           </p>
+          <p className="mt-2 text-xs text-gray-500">Private to this browser: you see escrows you created here and ones you opened from a role link (&quot;shared with you&quot;). No sign-up, so history lives with this browser&apos;s cookie; clearing cookies or switching devices starts a fresh, empty list. Telegram escrows stay in their chat.</p>
         </div>
 
         {escrows.length === 0 ? (
@@ -53,12 +56,12 @@ export default async function EscrowDashboardPage() {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {escrows.map((escrow) => (
-              <Link key={escrow.id} href={`/escrow/${escrow.id}`}>
+              <Link key={escrow.id} href={createEscrowLink(escrow.id, escrow.sharedRole ?? "payer", "").replace(/^https?:\/\/[^/]+/, "")}>
                 <Card className="hover:shadow-md transition-shadow cursor-pointer">
                   <CardContent className="p-6">
                     <div className="flex items-start justify-between mb-4">
                       <div>
-                        <p className="text-sm text-gray-600">Escrow {escrow.id.slice(-8)}</p>
+                        <p className="text-sm text-gray-600">Escrow {escrow.id.slice(-8)}{escrow.sharedRole ? ` · shared with you (${escrow.sharedRole})` : ""}</p>
                         <p className="text-2xl font-bold mt-1">
                           {escrow.amount.toFixed(2)} {escrow.currency}
                         </p>

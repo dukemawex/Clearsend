@@ -50,7 +50,7 @@ export default function ReturnClient() {
             <label className="block text-sm font-semibold" htmlFor="cap">Type <code>CAPTURE</code> to take the payment</label>
             <input id="cap" className="cs-field" value={typed} onChange={(e) => setTyped(e.target.value)} autoComplete="off" />
             <button onClick={capture} disabled={busy || typed.trim() !== "CAPTURE"} className="btn-paypal w-full rounded-full px-6 py-3 font-bold disabled:opacity-50">{busy ? "Capturing…" : "Capture with PayPal (sandbox)"}</button>
-            {err && <ErrorBox>{err}</ErrorBox>}
+            {err && <><ErrorBox>{err}</ErrorBox><div className="flex flex-wrap gap-2"><button onClick={capture} disabled={busy} className="btn-ghost rounded-full px-4 py-2 text-sm font-bold">Retry capture</button>{kind === "escrow" && id && <ButtonLink href={roleUrl ?? "/escrow"} variant="ghost">Start funding again</ButtonLink>}</div></>}
           </div>
         )}
         <SandboxNote />

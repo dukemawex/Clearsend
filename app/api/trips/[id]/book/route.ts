@@ -24,7 +24,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     });
 
     const links = paypalOrder.links as Array<{ rel: string; href: string }> | undefined;
-    const approveUrl = links?.find((l) => l.rel === "approve")?.href;
+    const approveUrl = links?.find((l) => l.rel === "payer-action" || l.rel === "approve")?.href;
 
     return NextResponse.json({
       tripId: trip.id,

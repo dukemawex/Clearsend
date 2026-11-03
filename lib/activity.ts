@@ -1,9 +1,10 @@
 // Append-only activity log in Upstash Redis (sorted set index + JSON values).
 // Real records only: entries are written when the agent, a web user or a chat bot actually does something.
 import { timingSafeEqual } from "crypto";
+import { currentOwner } from "@/lib/owner";
 
 export type ActivityKind = "paypal" | "decision" | "confirmation" | "escrow" | "trip" | "flight-search" | "chat" | "status" | "system";
-export type Activity = { id: string; at: string; kind: ActivityKind; subject: string; actor: string; summary: string; data?: Record<string, unknown> };
+export type Activity = { ownerId?: string; id: string; at: string; kind: ActivityKind; subject: string; actor: string; summary: string; data?: Record<string, unknown> };
 
 const INDEX = "cs-activity:index";
 const key = (id: string) => `cs-activity:${id}`;
@@ -32,7 +33,8 @@ function newId() {
 /** Best effort: logging must never break a money flow. Returns null when storage is missing or fails. */
 export async function recordActivity(a: Omit<Activity, "id" | "at">): Promise<Activity | null> {
   if (!activityConfigured()) return null;
-  const item: Activity = { id: newId(), at: new Date().toISOString(), ...a, summary: a.summary.slice(0, 500) };
+  const ownerId = "ownerId" in a ? a.ownerId : (await currentOwner()) ?? undefined;
+  const item: Activity = { id: newId(), at: new Date().toISOString(), ...a, ownerId, summary: a.summary.slice(0, 500) };
   try {
     await redis("SET", key(item.id), JSON.stringify(item));
     await redis("ZADD", INDEX, Date.now(), item.id);
@@ -43,8 +45,15 @@ export async function recordActivity(a: Omit<Activity, "id" | "at">): Promise<Ac
   }
 }
 
+/** Activity visible to an owner: their own entries plus entries about escrows shared with them. */
+export async function listOwnerActivity(owner: string | null, limit = 100, filter: { subject?: string; kind?: string; q?: string } = {}, sharedSubjects: string[] = []): Promise<Activity[]> {
+  if (!owner) return [];
+  const shared = new Set(sharedSubjects);
+  return (await listActivity(1000, filter)).filter((a) => a.ownerId === owner || (a.ownerId !== undefined && shared.has(a.subject))).slice(0, limit);
+}
+
 export async function listActivity(limit = 100, filter: { subject?: string; kind?: string; q?: string } = {}): Promise<Activity[]> {
-  const scan = filter.subject || filter.kind || filter.q ? 500 : limit;
+  const scan = filter.subject || filter.kind || filter.q ? Math.max(500, limit) : limit;
   const ids = await redis<string[]>("ZREVRANGE", INDEX, 0, scan - 1);
   if (!ids?.length) return [];
   const raws = await redis<(string | null)[]>("MGET", ...ids.map(key));

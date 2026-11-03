@@ -1,19 +1,25 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createEscrow } from "@/lib/escrow";
+import { createEscrow, EscrowError } from "@/lib/escrow";
 import { createEscrowLink } from "@/lib/escrow-links";
 import { z } from "zod";
+import { StructuredSpec } from "@/lib/spec";
 
 const CreateEscrowSchema = z.object({
   payer: z.string(),
   payerEmail: z.string().email(),
   recipient: z.string(),
   recipientEmail: z.string().email().optional(),
-  recipientPayerId: z.string().optional(),
-  recipientCountry: z.string(),
+  recipientPayerId: z.string().max(13).optional(),
+  recipientPhone: z.string().max(20).optional(),
+  recipientType: z.enum(["EMAIL", "PHONE", "PAYPAL_ID"]).optional(),
+  receiveCurrency: z.string().length(3).optional(),
+  recipientCountry: z.string().min(2).max(2),
   amount: z.number().positive(),
   currency: z.string().length(3),
   specification: z.string(),
-  acceptanceCriteria: z.array(z.string()).optional(),
+  acceptanceCriteria: z.array(z.string().max(500)).max(30).optional(),
+  structuredSpec: StructuredSpec.optional(),
+  specDocument: z.object({ name: z.string().max(120), kind: z.string().max(10), size: z.number().nonnegative(), text: z.string().max(20_000), truncated: z.boolean(), method: z.string().max(20), note: z.string().max(500).optional(), uploadedAt: z.number() }).optional(),
 });
 
 function getPublicBaseUrl(request: NextRequest): string {
@@ -58,6 +64,7 @@ export async function POST(request: NextRequest) {
     if (error instanceof z.ZodError) {
       return NextResponse.json({ error: "Invalid input", details: error.issues }, { status: 400 });
     }
+    if (error instanceof EscrowError) return NextResponse.json({ error: error.message, code: error.code }, { status: 400 });
     console.error("escrow_create_error", error);
     return NextResponse.json({ error: error instanceof Error ? error.message : "Failed to create escrow" }, { status: 500 });
   }

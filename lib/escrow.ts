@@ -1,11 +1,15 @@
+import { currentOwner } from "@/lib/owner";
 import { recordActivity } from "./activity";
 import { z } from "zod";
+import { StructuredSpec } from "./spec";
+import { checkPayoutEligibility, validateRecipientId, type RecipientType } from "./payout-countries";
 import { Receipt, buildReceipt, fxAtEvent, type ReceiptKind } from "./receipts";
 
 export const EscrowState = z.enum(["created", "funded", "submitted", "verified", "rejected", "released", "refunded"]);
 export type EscrowState = z.infer<typeof EscrowState>;
 
 export const EscrowRecord = z.object({
+  ownerId: z.string().optional(),
   id: z.string(),
   state: EscrowState,
   payer: z.string(),
@@ -13,11 +17,16 @@ export const EscrowRecord = z.object({
   recipient: z.string(),
   recipientEmail: z.string().email().optional(),
   recipientPayerId: z.string().optional(),
+  recipientPhone: z.string().optional(),
+  recipientType: z.enum(["EMAIL", "PHONE", "PAYPAL_ID"]).optional(),
+  receiveCurrency: z.string().length(3).optional(),
+  payoutStatus: z.string().optional(),
   recipientCountry: z.string(),
   amount: z.number().positive(),
   currency: z.string().length(3),
   specification: z.string(),
   acceptanceCriteria: z.array(z.string()).optional(),
+  structuredSpec: StructuredSpec.optional(),
   orderId: z.string().optional(),
   captureId: z.string().optional(),
   payoutBatchId: z.string().optional(),
@@ -146,28 +155,47 @@ export async function createEscrow(input: {
   recipient: string;
   recipientEmail?: string;
   recipientPayerId?: string;
+  recipientPhone?: string;
+  recipientType?: RecipientType;
+  receiveCurrency?: string;
   recipientCountry: string;
   amount: number;
   currency: string;
   specification: string;
   acceptanceCriteria?: string[];
+  structuredSpec?: StructuredSpec;
+  specDocument?: { name: string; kind: string; size: number; text: string; truncated: boolean; method: string; note?: string; uploadedAt: number };
+  ownerId?: string | null;
 }): Promise<EscrowRecord> {
+  const ownerId = input.ownerId !== undefined ? input.ownerId : await currentOwner();
+  const type: RecipientType = input.recipientType ?? (input.recipientEmail ? "EMAIL" : input.recipientPhone ? "PHONE" : input.recipientPayerId ? "PAYPAL_ID" : "EMAIL");
+  const rid = type === "EMAIL" ? input.recipientEmail : type === "PHONE" ? input.recipientPhone : input.recipientPayerId;
+  if (rid) { const bad = validateRecipientId(type, rid); if (bad) throw new EscrowError(bad, "INVALID_RECIPIENT"); }
+  const country = input.recipientCountry.trim().toUpperCase();
+  const elig = checkPayoutEligibility(country, input.currency);
+  if (!elig.ok) throw new EscrowError(elig.error, "PAYOUT_UNSUPPORTED");
   const id = `escrow_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
   const now = Date.now();
   
   const escrow: EscrowRecord = {
     id,
+    ownerId: ownerId ?? undefined,
     state: "created",
     payer: input.payer,
     payerEmail: input.payerEmail,
     recipient: input.recipient,
     recipientEmail: input.recipientEmail,
     recipientPayerId: input.recipientPayerId,
-    recipientCountry: input.recipientCountry,
+    recipientPhone: input.recipientPhone,
+    recipientType: type,
+    receiveCurrency: input.receiveCurrency?.toUpperCase(),
+    recipientCountry: country,
     amount: input.amount,
     currency: input.currency,
     specification: input.specification,
     acceptanceCriteria: input.acceptanceCriteria,
+    structuredSpec: input.structuredSpec,
+    documents: input.specDocument ? [{ role: "spec", ...input.specDocument }] : undefined,
     createdAt: now,
     timeline: [{ state: "created", timestamp: now }],
   };
@@ -175,7 +203,7 @@ export async function createEscrow(input: {
   await getStorage().set(`escrow:${id}`, JSON.stringify(escrow));
   console.info("escrow_created", { id, amount: input.amount, currency: input.currency });
   
-  await recordActivity({ kind: "escrow", subject: escrow.id, actor: escrow.payer, summary: `Escrow created: ${escrow.amount} ${escrow.currency} from ${escrow.payer} to ${escrow.recipient} (${escrow.recipientCountry}).` });
+  await recordActivity({ ownerId: escrow.ownerId, kind: "escrow", subject: escrow.id, actor: escrow.payer, summary: `Escrow created: ${escrow.amount} ${escrow.currency} from ${escrow.payer} to ${escrow.recipient} (${escrow.recipientCountry}).` });
   return escrow;
 }
 
@@ -190,7 +218,31 @@ export async function getEscrow(id: string): Promise<EscrowRecord | null> {
   }
 }
 
-export async function listEscrows(): Promise<EscrowRecord[]> {
+/** Escrow ids a visitor opened through a valid role link ("shared with me"), keyed server-side by their owner id. */
+export async function sharedEscrows(owner: string | null): Promise<{ id: string; role: "payer" | "recipient" | "verifier" }[]> {
+  if (!owner) return [];
+  try { return JSON.parse((await getStorage().get(`shared:${owner}`)) ?? "[]"); } catch { return []; }
+}
+export async function sharedEscrowIds(owner: string | null): Promise<string[]> { return (await sharedEscrows(owner)).map((s) => s.id); }
+export async function addSharedEscrow(owner: string | null, id: string, role: "payer" | "recipient" | "verifier") {
+  if (!owner) return;
+  const list = await sharedEscrows(owner);
+  if (!list.some((s) => s.id === id && s.role === role)) await getStorage().set(`shared:${owner}`, JSON.stringify([{ id, role }, ...list].slice(0, 200)));
+}
+/** May this owner see this escrow without a role token? Owner match or shared via a role link. Legacy (no ownerId) → never. */
+export async function ownerCanSee(e: EscrowRecord, owner: string | null) {
+  if (!owner) return false;
+  return e.ownerId === owner || (await sharedEscrowIds(owner)).includes(e.id);
+}
+
+/** Only the given owner's escrows plus ones shared with them. No owner → nothing. Legacy records without ownerId are hidden. */
+export async function listEscrows(owner: string | null): Promise<(EscrowRecord & { sharedRole?: "payer" | "recipient" | "verifier" })[]> {
+  if (!owner) return [];
+  const shared = new Map((await sharedEscrows(owner)).map((s) => [s.id, s.role] as const));
+  return (await listAllEscrows()).filter((e) => e.ownerId === owner || shared.has(e.id)).map((e) => (e.ownerId === owner ? e : { ...e, sharedRole: shared.get(e.id) }));
+}
+
+async function listAllEscrows(): Promise<EscrowRecord[]> {
   const keys = await getStorage().keys("escrow:*");
   const records = await Promise.all(keys.map((key) => getStorage().get(key)));
   return records
@@ -233,9 +285,9 @@ async function updateEscrow(id: string, updates: Partial<EscrowRecord>, newState
       released: `Released ${updated.amount} ${updated.currency} to ${updated.recipient} via PayPal Payout (batch ${updated.payoutBatchId ?? "?"}).`,
       refunded: `Refunded ${updated.amount} ${updated.currency} to ${updated.payer} via PayPal.`,
     };
-    await recordActivity({ kind: newState === "verified" || newState === "rejected" ? "decision" : ["funded", "released", "refunded"].includes(newState) ? "paypal" : "escrow", subject: id, actor: newState === "verified" || newState === "rejected" ? "agent" : "ClearSend", summary: msg[newState] ?? `Escrow is now ${newState}.`, data: { state: newState } });
+    await recordActivity({ ownerId: updated.ownerId, kind: newState === "verified" || newState === "rejected" ? "decision" : ["funded", "released", "refunded"].includes(newState) ? "paypal" : "escrow", subject: id, actor: newState === "verified" || newState === "rejected" ? "agent" : "ClearSend", summary: msg[newState] ?? `Escrow is now ${newState}.`, data: { state: newState } });
   } else if (updates.documents) {
-    await recordActivity({ kind: "escrow", subject: id, actor: "ClearSend", summary: `Document attached: ${updates.documents.at(-1)?.name ?? "file"}.` });
+    await recordActivity({ ownerId: updated.ownerId, kind: "escrow", subject: id, actor: "ClearSend", summary: `Document attached: ${updates.documents.at(-1)?.name ?? "file"}.` });
   }
   
   return updated;
@@ -273,7 +325,7 @@ export async function releaseEscrow(id: string, payoutBatchId: string, payoutIte
   if (escrow.state !== "verified") throw new EscrowError(`Escrow ${id} is ${escrow.state}, expected 'verified'`, "INVALID_STATE");
   
   const receipt = await escrowReceipt({ ...escrow, payoutBatchId, payoutItemId }, "payout", status ?? "PENDING");
-  return updateEscrow(id, { payoutBatchId, payoutItemId, receipts: [...(escrow.receipts ?? []), receipt] }, "released");
+  return updateEscrow(id, { payoutBatchId, payoutItemId, payoutStatus: status ?? "PENDING", receipts: [...(escrow.receipts ?? []), receipt] }, "released");
 }
 
 export async function refundEscrow(id: string, refundId: string, status?: string): Promise<EscrowRecord> {
@@ -302,10 +354,19 @@ async function escrowReceipt(e: EscrowRecord, kind: ReceiptKind, status: string)
     kind, subjectType: "escrow", subjectId: e.id, issuedAt: Date.now(),
     payer: e.payer, payerEmail: e.payerEmail, recipient: e.recipient, recipientEmail: e.recipientEmail, recipientCountry: e.recipientCountry,
     description: e.specification, amount: e.amount, currency: e.currency,
-    fx: kind === "refund" ? null : await fxAtEvent(e.currency, e.recipientCountry),
+    fx: kind === "refund" ? null : await fxAtEvent(e.currency, e.recipientCountry, e.receiveCurrency),
     paypal: { orderId: e.orderId, captureId: e.captureId, payoutBatchId: kind === "payout" ? e.payoutBatchId : undefined, payoutItemId: kind === "payout" ? e.payoutItemId : undefined, refundId: kind === "refund" ? e.refundId : undefined },
     status,
   });
   await recordActivity({ kind: "paypal", subject: e.id, actor: "ClearSend", summary: `Receipt ${receipt.number} issued (${kind}, ${receipt.amount.toFixed(2)} ${receipt.currency}, ${status}).`, data: { receiptId: receipt.id } });
   return receipt;
 }
+
+/** PayPal receiver + recipient_type for this escrow's payout. */
+export function payoutReceiver(e: EscrowRecord): { receiver: string; recipientType: RecipientType } | null {
+  const t = e.recipientType ?? (e.recipientEmail ? "EMAIL" : e.recipientPhone ? "PHONE" : "PAYPAL_ID");
+  const r = t === "EMAIL" ? e.recipientEmail : t === "PHONE" ? e.recipientPhone : e.recipientPayerId;
+  return r ? { receiver: t === "PHONE" ? r.replace(/[\s()-]/g, "") : r, recipientType: t } : null;
+}
+
+export async function setPayoutStatus(id: string, payoutStatus: string) { return updateEscrow(id, { payoutStatus }); }

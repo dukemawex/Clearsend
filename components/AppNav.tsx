@@ -15,7 +15,6 @@ const NAV = [
   { href: "/activity", label: "Activity", icon: "📜" },
   { href: "/receipts", label: "Receipts", icon: "🧾" },
   { href: "/chat-bots", label: "Chat bots", icon: "🤖" },
-  { href: "/judges", label: "Judges", icon: "📋" },
 ];
 
 function ThemeToggle() {

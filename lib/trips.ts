@@ -1,3 +1,4 @@
+import { currentOwner } from "@/lib/owner";
 import { recordActivity } from "./activity";
 import { z } from "zod";
 import { Receipt, buildReceipt, type ReceiptKind } from "./receipts";
@@ -26,6 +27,7 @@ export const PassengerDetails = z.object({
 export type PassengerDetails = z.infer<typeof PassengerDetails>;
 
 export const TripRecord = z.object({
+  ownerId: z.string().optional(),
   id: z.string(),
   state: TripState,
   userId: z.string().optional(),
@@ -188,7 +190,9 @@ export async function createTrip(input: {
   currency: string;
   provider: "duffel" | "rapidapi" | "aviationstack";
   providerOfferId?: string;
+  ownerId?: string | null;
 }): Promise<TripRecord> {
+  const ownerId = input.ownerId !== undefined ? input.ownerId : await currentOwner();
   const id = `trip_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
   const now = Date.now();
   
@@ -197,6 +201,7 @@ export async function createTrip(input: {
   
   const trip: TripRecord = {
     id,
+    ownerId: ownerId ?? undefined,
     state: "draft",
     origin: input.origin,
     destination: input.destination,
@@ -221,7 +226,7 @@ export async function createTrip(input: {
   
   await getStorage().set(`trip:${id}`, JSON.stringify(trip));
   console.info("trip_created", { id, origin: input.origin, destination: input.destination });
-  await recordActivity({ kind: "trip", subject: id, actor: "ClearSend", summary: `Chose ${input.airline} ${input.origin} → ${input.destination} on ${input.departureDate}: fare ${input.basePrice.toFixed(2)} ${input.currency} (${input.provider}).` });
+  await recordActivity({ ownerId: trip.ownerId, kind: "trip", subject: id, actor: "ClearSend", summary: `Chose ${input.airline} ${input.origin} → ${input.destination} on ${input.departureDate}: fare ${input.basePrice.toFixed(2)} ${input.currency} (${input.provider}).` });
   
   return trip;
 }
@@ -237,7 +242,13 @@ export async function getTrip(id: string): Promise<TripRecord | null> {
   }
 }
 
-export async function listTrips(userId?: string): Promise<TripRecord[]> {
+/** Only this owner's trips. No owner → nothing; legacy trips without ownerId are hidden. */
+export async function listTrips(owner: string | null, userId?: string): Promise<TripRecord[]> {
+  if (!owner) return [];
+  return (await listAllTrips(userId)).filter((t) => t.ownerId === owner);
+}
+
+async function listAllTrips(userId?: string): Promise<TripRecord[]> {
   const keys = await getStorage().keys("trip:*");
   const records = await Promise.all(keys.map((key) => getStorage().get(key)));
   const trips = records
@@ -277,7 +288,7 @@ async function updateTrip(id: string, updates: Partial<TripRecord>, newState?: T
   await getStorage().set(`trip:${id}`, JSON.stringify(updated));
   console.info("trip_updated", { id, state: updated.state });
   if (newState && newState !== trip.state) {
-    await recordActivity({ kind: newState === "payment_approved" || newState === "refunded" ? "paypal" : "trip", subject: id, actor: "ClearSend", summary: newState === "payment_approved" ? `PayPal captured ${updated.totalPrice.toFixed(2)} ${updated.currency} for ${updated.origin} → ${updated.destination}.` : `Trip ${updated.origin} → ${updated.destination} is now ${newState.replace(/_/g, " ")}.`, data: { state: newState } });
+    await recordActivity({ ownerId: updated.ownerId, kind: newState === "payment_approved" || newState === "refunded" ? "paypal" : "trip", subject: id, actor: "ClearSend", summary: newState === "payment_approved" ? `PayPal captured ${updated.totalPrice.toFixed(2)} ${updated.currency} for ${updated.origin} → ${updated.destination}.` : `Trip ${updated.origin} → ${updated.destination} is now ${newState.replace(/_/g, " ")}.`, data: { state: newState } });
   }
   
   return updated;

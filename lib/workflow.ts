@@ -1,4 +1,4 @@
-// The one workflow everyone follows, shared by the Room home, /plan, role views and /judges.
+// The one workflow everyone follows, shared by the Room home, /plan and role views.
 export const WORKFLOW = [
   { key: "search", label: "Search flights", hint: "Sky-Scrapper, Duffel, open data" },
   { key: "choose", label: "Choose", hint: "Agent asks which flight" },

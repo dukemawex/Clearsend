@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { convertToModelMessages } from "ai";
 import { streamAgent, getAvailableProviders } from "@/lib/agent";
+import { ownerFromRequest, runAsOwner } from "@/lib/owner";
 
 export const runtime = "nodejs";
 
@@ -20,7 +21,7 @@ export async function POST(request: Request) {
     let lastError: Error | null = null;
     for (let i = 0; i < providers.length; i++) {
       try {
-        const result = streamAgent(modelMessages, i);
+        const result = runAsOwner(ownerFromRequest(request), () => streamAgent(modelMessages, i));
         return result.toUIMessageStreamResponse();
       } catch (error) {
         console.error(`Provider ${providers[i].name} failed:`, error);

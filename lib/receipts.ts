@@ -103,8 +103,8 @@ export function buildReceipt(i: BuildInput): Receipt {
 }
 
 /** Live FX at event time (real rate provider); undefined when the destination currency is unknown or the provider fails. */
-export async function fxAtEvent(from: string, country?: string): Promise<BuildInput["fx"]> {
-  const to = currencyForCountry(country);
+export async function fxAtEvent(from: string, country?: string, receiveCurrency?: string): Promise<BuildInput["fx"]> {
+  const to = receiveCurrency ?? currencyForCountry(country);
   if (!to) return null;
   try { const { rate, source } = await getMidMarketRate(from, to); return { destinationCurrency: to, midMarketRate: rate, source }; }
   catch { return null; }
@@ -129,6 +129,7 @@ export function receiptText(r: Receipt): string {
     `Amount: ${money(r.amount, r.currency)}`,
     `Fee (${r.feePercent}%): ${money(r.fee, r.currency)}`,
     r.fx ? `FX: 1 ${r.currency} = ${r.fx.midMarketRate.toFixed(4)} ${r.fx.destinationCurrency} mid-market, ${r.fx.customerRate.toFixed(4)} after ${r.fx.spreadPercent}% spread → ${money(r.fx.destinationAmount, r.fx.destinationCurrency)} (quote at event time)` : "",
+    r.kind === "payout" ? `Paid in ${r.currency} to the recipient's PayPal account${r.recipientCountry ? ` (${r.recipientCountry})` : ""}; they withdraw to a local bank from PayPal. Unclaimed payouts return to the sender after 30 days.` : "",
     ...ids,
     `Status: ${r.status}`,
     r.environment,
