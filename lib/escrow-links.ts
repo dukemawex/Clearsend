@@ -1,4 +1,4 @@
-import { createHmac } from "crypto";
+import { createHmac, timingSafeEqual } from "crypto";
 
 function getSecret(): string {
   const secret = process.env.ESCROW_LINK_SECRET;
@@ -20,7 +20,15 @@ export function signEscrowToken(escrowId: string, role: EscrowRole): string {
 
 export function verifyEscrowToken(escrowId: string, role: EscrowRole, token: string): boolean {
   const expected = signEscrowToken(escrowId, role);
-  return token === expected;
+  if (!expected || !token) return false;
+  const expectedBuffer = Buffer.from(expected);
+  const tokenBuffer = Buffer.from(token);
+  if (expectedBuffer.length !== tokenBuffer.length) return false;
+  try {
+    return timingSafeEqual(expectedBuffer, tokenBuffer);
+  } catch {
+    return false;
+  }
 }
 
 export function createEscrowLink(escrowId: string, role: EscrowRole, baseUrl?: string): string {

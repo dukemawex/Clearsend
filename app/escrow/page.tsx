@@ -1,28 +1,19 @@
-"use client";
-
-import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
-import type { EscrowRecord } from "@/lib/escrow";
+import { listEscrows, type EscrowRecord } from "@/lib/escrow";
 
-export default function EscrowDashboardPage() {
-  const [escrows, setEscrows] = useState<EscrowRecord[]>([]);
-  const [loading, setLoading] = useState(true);
+export const dynamic = "force-dynamic";
 
-  useEffect(() => {
-    fetch("/api/escrow/list")
-      .then((res) => res.json())
-      .then((data) => {
-        setEscrows(Array.isArray(data) ? data : []);
-        setLoading(false);
-      })
-      .catch(() => {
-        setLoading(false);
-      });
-  }, []);
+export default async function EscrowDashboardPage() {
+  let escrows: EscrowRecord[];
+  try {
+    escrows = await listEscrows();
+  } catch {
+    escrows = [];
+  }
 
-  const getStateBadgeColor = (state: EscrowRecord["state"]) => {
+  const getStateBadgeColor = (state: string) => {
     switch (state) {
       case "created": return "bg-gray-500";
       case "funded": return "bg-blue-500";
@@ -34,14 +25,6 @@ export default function EscrowDashboardPage() {
       default: return "bg-gray-400";
     }
   };
-
-  if (loading) {
-    return (
-      <div className="min-h-screen p-8 flex items-center justify-center">
-        <p className="text-gray-600">Loading escrows...</p>
-      </div>
-    );
-  }
 
   return (
     <div className="min-h-screen p-8 bg-gray-50">
