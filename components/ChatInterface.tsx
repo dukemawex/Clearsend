@@ -48,6 +48,7 @@ export function ChatInterface() {
   }, [messages, status, speakReplies, voice]);
 
   async function attach(file: File) {
+    if (file.size > 4.5 * 1024 * 1024) { setUploadError("Files over 4.5 MB exceed Vercel's request limit. Please upload a smaller file."); return; }
     setUploading(true); setUploadError(undefined);
     try {
       const form = new FormData(); form.set("file", file);

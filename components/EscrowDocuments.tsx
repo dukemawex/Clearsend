@@ -17,6 +17,7 @@ export function EscrowDocuments({ escrow, role, token, onChange }: { escrow: Esc
 
   async function upload(file: File) {
     if (!kind || !token) return;
+    if (file.size > 4.5 * 1024 * 1024) { setMessage("Files over 4.5 MB exceed Vercel's request limit. Please upload a smaller file."); return; }
     setBusy(true);
     setMessage(undefined);
     try {
@@ -56,7 +57,7 @@ export function EscrowDocuments({ escrow, role, token, onChange }: { escrow: Esc
           </>
         )}
       </div>
-      {kind && <p className="mt-2 text-xs text-gray-500">PDF, DOCX, TXT/MD or image, up to 5 MB. Text is extracted only; files are never run. Image text needs OCR, which may be unavailable on the server.</p>}
+      {kind && <p className="mt-2 text-xs text-gray-500">PDF, DOCX, TXT/MD or image, up to 5 MB (4.5 MB on Vercel). Text is extracted only; files are never run. Image text needs OCR, which may be unavailable on the server.</p>}
       {message && <p className="mt-2 text-sm text-gray-800" role="status">{message}</p>}
       {docs.length > 0 && (
         <ul className="mt-3 flex flex-wrap gap-2">
