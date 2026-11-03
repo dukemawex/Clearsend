@@ -85,7 +85,7 @@ Next.js 15 (App Router) and React, Vercel AI SDK (`ai`, `@ai-sdk/openai`), Upsta
 
 ### Sponsor integrations
 
-None. ClearSend does not use any of the optional sponsor tools (APIMatic, Postman, Astro, Render).
+**Kernel** ([onkernel.com](https://www.onkernel.com)): a stealth cloud browser, driven with Playwright over CDP (`@onkernel/sdk` + `playwright-core`), reads live Google Flights fares for flight search (`lib/kernel-flights.ts`). ClearSend does not buy the Google Flights ticket; paid trips are PayPal sandbox payments followed by a **Duffel test booking**, whose test fare can differ from the Google price and is labelled as a test booking. ClearSend does not use the other optional sponsor tools (APIMatic, Postman, Astro, Render).
 
 ---
 
