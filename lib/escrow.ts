@@ -3,7 +3,7 @@ import { recordActivity } from "./activity";
 import { z } from "zod";
 import { StructuredSpec } from "./spec";
 import { checkPayoutEligibility, validateRecipientId, type RecipientType } from "./payout-countries";
-import { Receipt, buildReceipt, fxAtEvent, type ReceiptKind } from "./receipts";
+import { Receipt, buildReceipt, escrowPayoutAmount, fxAtEvent, type ReceiptKind } from "./receipts";
 
 export const EscrowState = z.enum(["created", "funded", "submitted", "verified", "rejected", "released", "refunded"]);
 export type EscrowState = z.infer<typeof EscrowState>;
@@ -301,7 +301,7 @@ async function updateEscrow(id: string, updates: Partial<EscrowRecord>, newState
       submitted: `Deliverable submitted by ${updated.recipient}.`,
       verified: `AI verifier: deliverable meets the specification. Waiting for a human to release.`,
       rejected: `AI verifier: deliverable does not meet the specification.`,
-      released: `Released ${updated.amount} ${updated.currency} to ${updated.recipient} via PayPal Payout (batch ${updated.payoutBatchId ?? "?"}).`,
+      released: `Released ${escrowPayoutAmount(updated.amount)} ${updated.currency} (after 2.5% fee) to ${updated.recipient} via PayPal Payout (batch ${updated.payoutBatchId ?? "?"}).`,
       refunded: `Refunded ${updated.amount} ${updated.currency} to ${updated.payer} via PayPal.`,
     };
     await recordActivity({ ownerId: updated.ownerId, kind: newState === "verified" || newState === "rejected" ? "decision" : ["funded", "released", "refunded"].includes(newState) ? "paypal" : "escrow", subject: id, actor: newState === "verified" || newState === "rejected" ? "agent" : "ClearSend", summary: msg[newState] ?? `Escrow is now ${newState}.`, data: { state: newState } });

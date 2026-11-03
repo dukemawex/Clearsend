@@ -1,5 +1,5 @@
 import { ClearSendLogo } from "@/components/clearsend-logo";
-import { KIND_TITLE, formatLagos, formatUtc, money, type Receipt } from "@/lib/receipts";
+import { KIND_TITLE, SETTLED_LABEL, formatLagos, formatUtc, money, type Receipt } from "@/lib/receipts";
 
 function Row({ k, v, strong }: { k: string; v: React.ReactNode; strong?: boolean }) {
   return <div className="flex items-start justify-between gap-6 border-b border-line py-2.5 text-sm last:border-0"><dt className="text-mut">{k}</dt><dd className={`text-right ${strong ? "font-extrabold" : "font-semibold"} break-all`}>{v}</dd></div>;
@@ -31,6 +31,7 @@ export function ReceiptView({ r }: { r: Receipt }) {
         {r.description && <Row k="For" v={r.description} />}
         <Row k="Amount" v={money(r.amount, r.currency)} strong />
         <Row k={`ClearSend fee (${r.feePercent}%)`} v={money(r.fee, r.currency)} />
+        {r.settledAmount !== undefined && <Row k={SETTLED_LABEL[r.kind]} v={money(r.settledAmount, r.currency)} strong />}
         {r.fx ? <>
           <Row k="Mid-market rate" v={`1 ${r.currency} = ${r.fx.midMarketRate.toFixed(4)} ${r.fx.destinationCurrency}`} />
           <Row k={`FX spread (${r.fx.spreadPercent}%)`} v={`Customer rate ${r.fx.customerRate.toFixed(4)}`} />

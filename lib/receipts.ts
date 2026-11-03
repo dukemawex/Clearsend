@@ -9,6 +9,10 @@ export const FX_SPREAD_PERCENT = 1.2;
 export function spreadPercentFor(from: string, to: string): number {
   return from.trim().toUpperCase() === to.trim().toUpperCase() ? 0 : FX_SPREAD_PERCENT;
 }
+/** Fee model: the payer is charged exactly the escrow amount; ClearSend's 2.5% fee is withheld from the payout.
+ * The recipient is paid amount - fee (same currency), and a refund returns the full captured amount (no fee kept). */
+export function escrowFee(amount: number) { return r2(amount * FEE_PERCENT / 100); }
+export function escrowPayoutAmount(amount: number) { return r2(amount - escrowFee(amount)); }
 export const SANDBOX_LABEL = "PayPal Sandbox - test payment, no real money";
 
 export const ReceiptKind = z.enum(["funding", "payout", "refund"]);
@@ -31,6 +35,8 @@ export const Receipt = z.object({
   currency: z.string(),
   feePercent: z.number(),
   fee: z.number(),
+  /** Money that actually moved in this PayPal event: charged (funding), sent to recipient (payout), returned to payer (refund). */
+  settledAmount: z.number().optional(),
   fx: z.object({
     destinationCurrency: z.string(),
     midMarketRate: z.number(),
@@ -92,13 +98,15 @@ export type BuildInput = {
 /** Pure: builds a receipt from values that were already stored or returned by PayPal. */
 export function buildReceipt(i: BuildInput): Receipt {
   const feePercent = i.feeOverride?.percent ?? FEE_PERCENT;
-  const fee = r2(i.feeOverride?.amount ?? i.amount * FEE_PERCENT / 100);
+  const isEscrowRefund = i.subjectType === "escrow" && i.kind === "refund";
+  const fee = isEscrowRefund ? 0 : r2(i.feeOverride?.amount ?? i.amount * FEE_PERCENT / 100);
+  const settledAmount = i.subjectType === "escrow" && i.kind === "payout" ? r2(i.amount - fee) : i.amount;
   const fx = i.fx ? (() => {
     const same = spreadPercentFor(i.currency, i.fx.destinationCurrency) === 0;
     const spreadPercent = same ? 0 : FX_SPREAD_PERCENT;
     const midMarketRate = same ? 1 : i.fx.midMarketRate;
     const customerRate = midMarketRate * (1 - spreadPercent / 100);
-    return { destinationCurrency: i.fx.destinationCurrency, midMarketRate, spreadPercent, customerRate, destinationAmount: r2((i.amount - fee) * customerRate), source: i.fx.source };
+    return { destinationCurrency: i.fx.destinationCurrency, midMarketRate, spreadPercent, customerRate, destinationAmount: r2((i.kind === "funding" && i.subjectType === "escrow" ? i.amount - fee : settledAmount) * customerRate), source: i.fx.source };
   })() : undefined;
   const d = new Date(i.issuedAt);
   const number = `CS-${d.toISOString().slice(0, 10).replace(/-/g, "")}-${i.kind.slice(0, 3).toUpperCase()}-${i.subjectId.slice(-6).toUpperCase()}`;
@@ -106,7 +114,7 @@ export function buildReceipt(i: BuildInput): Receipt {
   return Receipt.parse({
     id: receiptId(i.kind, i.subjectId), number, kind: i.kind, subjectType: i.subjectType, subjectId: i.subjectId, issuedAt: i.issuedAt,
     payer: i.payer, payerEmail: i.payerEmail, recipient: i.recipient, recipientEmail: i.recipientEmail, recipientCountry: i.recipientCountry,
-    description: i.description?.slice(0, 200), amount: i.amount, currency: i.currency, feePercent, fee, fx, paypal, status: i.status, environment: SANDBOX_LABEL,
+    description: i.description?.slice(0, 200), amount: i.amount, currency: i.currency, feePercent: isEscrowRefund ? 0 : feePercent, fee, settledAmount, fx, paypal, status: i.status, environment: SANDBOX_LABEL,
   });
 }
 
@@ -122,6 +130,7 @@ export function formatUtc(ms: number) { return new Date(ms).toISOString().replac
 export function formatLagos(ms: number) {
   return new Intl.DateTimeFormat("en-GB", { timeZone: "Africa/Lagos", year: "numeric", month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).format(new Date(ms)) + " WAT (Lagos)";
 }
+export const SETTLED_LABEL: Record<ReceiptKind, string> = { funding: "Charged to payer", payout: "Sent to recipient", refund: "Refunded to payer" };
 export const KIND_TITLE: Record<ReceiptKind, string> = { funding: "Escrow funding receipt", payout: "Payout receipt", refund: "Refund receipt" };
 export const money = (n: number, c: string) => `${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${c}`;
 
@@ -135,7 +144,8 @@ export function receiptText(r: Receipt): string {
     `Date: ${formatUtc(r.issuedAt)} / ${formatLagos(r.issuedAt)}`,
     `Payer: ${r.payer}  →  Recipient: ${r.recipient}${r.recipientCountry ? ` (${r.recipientCountry})` : ""}`,
     `Amount: ${money(r.amount, r.currency)}`,
-    `Fee (${r.feePercent}%): ${money(r.fee, r.currency)}`,
+    `Fee (${r.feePercent}%): ${money(r.fee, r.currency)}${r.kind === "payout" && r.subjectType === "escrow" ? " (withheld from payout)" : r.kind === "refund" && r.subjectType === "escrow" ? " (not kept on refunds)" : ""}`,
+    r.settledAmount !== undefined ? `${SETTLED_LABEL[r.kind]}: ${money(r.settledAmount, r.currency)}` : "",
     r.fx ? `FX: 1 ${r.currency} = ${r.fx.midMarketRate.toFixed(4)} ${r.fx.destinationCurrency} mid-market, ${r.fx.customerRate.toFixed(4)} after ${r.fx.spreadPercent}% spread → ${money(r.fx.destinationAmount, r.fx.destinationCurrency)} (quote at event time)` : "",
     r.kind === "payout" ? `Paid in ${r.currency} to the recipient's PayPal account${r.recipientCountry ? ` (${r.recipientCountry})` : ""}; they withdraw to a local bank from PayPal. Unclaimed payouts return to the sender after 30 days.` : "",
     ...ids,

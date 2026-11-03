@@ -33,7 +33,7 @@ export async function POST(request: NextRequest) {
       if (!claim.ok) return NextResponse.json({ error: `Escrow was already settled (${claim.by})` }, { status: 409 });
       let refundResult;
       try {
-        refundResult = await refundCapture(fresh.captureId, { value: fresh.amount.toFixed(2), currency: fresh.currency }, reason || "ClearSend Escrow refund");
+        refundResult = await refundCapture(fresh.captureId, { value: fresh.amount, currency: fresh.currency }, reason || "ClearSend Escrow refund", fresh.id);
       } catch (e) {
         if (e instanceof PayPalError && e.status >= 400 && e.status < 500) await releaseSettlementClaim(escrowId);
         throw e;
