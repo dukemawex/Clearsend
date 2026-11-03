@@ -17,7 +17,14 @@ export function PayoutInfo({ escrow }: { escrow: EscrowRecord & { payoutNote?: s
       <p className="mt-1">To <b>{escrow.recipient}</b> in <b>{PAYOUT_COUNTRIES[escrow.recipientCountry] ?? escrow.recipientCountry}</b> via PayPal {escrow.recipientType === "PHONE" ? "phone" : escrow.recipientType === "PAYPAL_ID" ? "ID" : "email"} {id ? <code>{id}</code> : null}. Paid in <b>{escrow.amount.toFixed(2)} {escrow.currency}</b>.</p>
       {q && <p className="mt-1">Indicative: fee {q.fee.toFixed(2)} {escrow.currency} (2.5%), rate {q.effectiveRate.toFixed(4)} after 1.2% spread ({q.source}) ≈ <b>{q.received.toFixed(2)} {q.to}</b>.</p>}
       <p className="mt-1 text-xs text-gray-600">Funds land in the recipient&apos;s PayPal account (PayPal converts with its own rate); they withdraw to their local bank from PayPal. No direct bank payout. Unclaimed payouts return to the sender after 30 days.</p>
-      {escrow.payoutStatus && <p className="mt-2"><b>Payout status:</b> {escrow.payoutStatus}{escrow.payoutNote ? ` - ${escrow.payoutNote}` : ""}</p>}
+      {escrow.payoutFailure && (
+        <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-red-800" data-testid="payout-failed">
+          <p className="font-bold">Payout failed: {escrow.payoutFailure.reason}</p>
+          <p className="mt-1 text-xs">PayPal status {escrow.payoutFailure.status}{escrow.payoutFailure.code ? `, code ${escrow.payoutFailure.code}` : ""} (batch {escrow.payoutFailure.batchId ?? "?"}). The recipient has not received these funds. The payer can correct the recipient&apos;s PayPal email or country and retry below.</p>
+        </div>
+      )}
+      {(escrow.payoutAttempts?.length ?? 0) > 0 && <p className="mt-2 text-xs text-gray-600">Earlier failed attempts: {escrow.payoutAttempts!.map((a) => `${a.batchId} (${a.code ?? a.status})`).join(", ")}</p>}
+      {!escrow.payoutFailure && escrow.payoutStatus && <p className="mt-2"><b>Payout status:</b> {escrow.payoutStatus}{escrow.payoutNote ? ` - ${escrow.payoutNote}` : ""}</p>}
     </div>
   );
 }

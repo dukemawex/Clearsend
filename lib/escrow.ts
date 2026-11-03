@@ -3,6 +3,7 @@ import { recordActivity } from "./activity";
 import { z } from "zod";
 import { StructuredSpec } from "./spec";
 import { checkPayoutEligibility, validateRecipientId, type RecipientType } from "./payout-countries";
+import { explainPayoutError, isPayoutFailed, PAYOUT_RETRY_GUIDANCE } from "./payout-failure";
 import { Receipt, buildReceipt, fxAtEvent, type ReceiptKind } from "./receipts";
 
 export const EscrowState = z.enum(["created", "funded", "submitted", "verified", "rejected", "released", "refunded"]);
@@ -21,6 +22,10 @@ export const EscrowRecord = z.object({
   recipientType: z.enum(["EMAIL", "PHONE", "PAYPAL_ID"]).optional(),
   receiveCurrency: z.string().length(3).optional(),
   payoutStatus: z.string().optional(),
+  /** Set when PayPal confirmed the current payout batch did not deliver (FAILED/DENIED/RETURNED/BLOCKED/...). */
+  payoutFailure: z.object({ status: z.string(), code: z.string().optional(), reason: z.string(), batchId: z.string().optional(), at: z.number() }).optional(),
+  /** Earlier payout batches that PayPal confirmed failed, oldest first. */
+  payoutAttempts: z.array(z.object({ batchId: z.string(), itemId: z.string().optional(), status: z.string(), code: z.string().optional(), reason: z.string().optional(), receiver: z.string().optional(), country: z.string().optional(), at: z.number() })).optional(),
   recipientCountry: z.string(),
   amount: z.number().positive(),
   currency: z.string().length(3),
@@ -301,7 +306,7 @@ async function updateEscrow(id: string, updates: Partial<EscrowRecord>, newState
       submitted: `Deliverable submitted by ${updated.recipient}.`,
       verified: `AI verifier: deliverable meets the specification. Waiting for a human to release.`,
       rejected: `AI verifier: deliverable does not meet the specification.`,
-      released: `Released ${updated.amount} ${updated.currency} to ${updated.recipient} via PayPal Payout (batch ${updated.payoutBatchId ?? "?"}).`,
+      released: `Released: payout of ${updated.amount} ${updated.currency} to ${updated.recipient} submitted to PayPal (batch ${updated.payoutBatchId ?? "?"}); delivery pending PayPal confirmation.`,
       refunded: `Refunded ${updated.amount} ${updated.currency} to ${updated.payer} via PayPal.`,
     };
     await recordActivity({ ownerId: updated.ownerId, kind: newState === "verified" || newState === "rejected" ? "decision" : ["funded", "released", "refunded"].includes(newState) ? "paypal" : "escrow", subject: id, actor: newState === "verified" || newState === "rejected" ? "agent" : "ClearSend", summary: msg[newState] ?? `Escrow is now ${newState}.`, data: { state: newState } });
@@ -397,13 +402,59 @@ export async function findEscrowByPayPal(q: { id?: string; orderId?: string; cap
   return (await listAllEscrows()).find((e) => (q.orderId && e.orderId === q.orderId) || (q.captureId && e.captureId === q.captureId) || (q.payoutBatchId && e.payoutBatchId === q.payoutBatchId)) ?? null;
 }
 
-/** Webhook reconcile for payouts: records PayPal's latest payout status on the escrow and its payout receipt. Never changes escrow state. */
-export async function reconcilePayoutStatus(id: string, payoutStatus: string, payoutItemId?: string): Promise<EscrowRecord> {
+/** Records PayPal's latest payout status on the escrow and its payout receipt (webhook or status poll). Never changes escrow state.
+ * A failed status also records the plain-English reason, marks the receipt FAILED and logs one activity entry per failed batch. */
+export async function reconcilePayoutStatus(id: string, payoutStatus: string, payoutItemId?: string, errorCode?: string, batchId?: string): Promise<EscrowRecord> {
   const e = await getEscrow(id);
   if (!e) throw new EscrowError(`Escrow ${id} not found`, "NOT_FOUND");
-  const receipts = (e.receipts ?? []).map((r) => (r.kind === "payout" ? { ...r, status: payoutStatus } : r));
-  return updateEscrow(id, { payoutStatus, payoutItemId: e.payoutItemId ?? payoutItemId, receipts });
+  const st = payoutStatus.toUpperCase();
+  if (batchId && e.payoutBatchId && batchId !== e.payoutBatchId) return e; // stale event for an earlier (failed) batch
+  if (isPayoutFailed(st)) {
+    const code = errorCode ?? e.payoutFailure?.code;
+    if (e.payoutFailure && e.payoutFailure.batchId === e.payoutBatchId && e.payoutFailure.code === code) return e;
+    const reason = explainPayoutError(code, st);
+    const receipts = (e.receipts ?? []).map((r) => (r.kind === "payout" ? { ...r, status: `FAILED${code ? ` (${code})` : ""}` } : r));
+    const updated = await updateEscrow(id, { payoutStatus: "FAILED", payoutItemId: e.payoutItemId ?? payoutItemId, payoutFailure: { status: st, code, reason, batchId: e.payoutBatchId, at: Date.now() }, receipts });
+    await recordActivity({ ownerId: e.ownerId, kind: "paypal", subject: id, actor: "PayPal", summary: `Payout failed: ${reason} (PayPal ${st}${code ? `, ${code}` : ""}, batch ${e.payoutBatchId ?? "?"}). ${PAYOUT_RETRY_GUIDANCE}`, data: { payoutStatus: st, code, batchId: e.payoutBatchId } });
+    return updated;
+  }
+  if (e.payoutFailure) return e; // never un-fail a batch PayPal already confirmed failed
+  const receipts = (e.receipts ?? []).map((r) => (r.kind === "payout" ? { ...r, status: st } : r));
+  return updateEscrow(id, { payoutStatus: st, payoutItemId: e.payoutItemId ?? payoutItemId, receipts });
 }
+
+/** After a confirmed-failed batch: optionally correct the recipient, then record the new batch + a fresh payout receipt. Caller holds the lock + retry claim. */
+export async function correctPayoutRecipient(id: string, fix: { recipientEmail?: string; recipientPhone?: string; recipientPayerId?: string; recipientType?: RecipientType; recipientCountry?: string }): Promise<EscrowRecord> {
+  const e = await getEscrow(id);
+  if (!e) throw new EscrowError(`Escrow ${id} not found`, "NOT_FOUND");
+  const type = fix.recipientType ?? e.recipientType ?? "EMAIL";
+  const rid = type === "EMAIL" ? fix.recipientEmail ?? e.recipientEmail : type === "PHONE" ? fix.recipientPhone ?? e.recipientPhone : fix.recipientPayerId ?? e.recipientPayerId;
+  if (!rid) throw new EscrowError("A recipient PayPal email, phone or PayPal ID is required", "INVALID_RECIPIENT");
+  const bad = validateRecipientId(type, rid); if (bad) throw new EscrowError(bad, "INVALID_RECIPIENT");
+  const country = (fix.recipientCountry ?? e.recipientCountry).trim().toUpperCase();
+  const elig = checkPayoutEligibility(country, e.currency);
+  if (!elig.ok) throw new EscrowError(elig.error, "PAYOUT_UNSUPPORTED");
+  const patch: Partial<EscrowRecord> = { recipientType: type, recipientCountry: country };
+  if (type === "EMAIL") patch.recipientEmail = rid; else if (type === "PHONE") patch.recipientPhone = rid; else patch.recipientPayerId = rid;
+  return updateEscrow(id, patch);
+}
+
+export async function recordPayoutRetry(id: string, payoutBatchId: string, payoutItemId?: string, status?: string): Promise<EscrowRecord> {
+  const e = await getEscrow(id);
+  if (!e) throw new EscrowError(`Escrow ${id} not found`, "NOT_FOUND");
+  if (e.state !== "released" || !e.payoutFailure) throw new EscrowError(`Escrow ${id} has no failed payout to retry`, "INVALID_STATE");
+  const rcv = payoutReceiver(e);
+  const attempt = { batchId: e.payoutBatchId ?? "?", itemId: e.payoutItemId, status: e.payoutFailure.status, code: e.payoutFailure.code, reason: e.payoutFailure.reason, receiver: rcv?.receiver, country: e.recipientCountry, at: e.payoutFailure.at };
+  const receipt = await escrowReceipt({ ...e, payoutBatchId, payoutItemId }, "payout", status ?? "PENDING");
+  const receipts = [...(e.receipts ?? []).filter((r) => r.kind !== "payout"), receipt];
+  const updated = await updateEscrow(id, { payoutBatchId, payoutItemId, payoutStatus: status ?? "PENDING", payoutFailure: undefined, payoutAttempts: [...(e.payoutAttempts ?? []), attempt], receipts });
+  await recordActivity({ ownerId: e.ownerId, kind: "paypal", subject: id, actor: "ClearSend", summary: `Payout retried: ${e.amount} ${e.currency} to ${e.recipient} (${e.recipientCountry}) via PayPal Payout (new batch ${payoutBatchId}; previous batch ${attempt.batchId} was ${attempt.status}).`, data: { payoutBatchId, previous: attempt.batchId } });
+  return updated;
+}
+
+/** One retry per failed batch, ever (permanent SET NX). Undo only when PayPal refused the new batch with a 4xx. */
+export async function claimPayoutRetry(id: string, failedBatchId: string): Promise<boolean> { return getStorage().setNX(`retry:escrow:${id}:${failedBatchId}`, String(Date.now())); }
+export async function releasePayoutRetryClaim(id: string, failedBatchId: string) { await getStorage().del(`retry:escrow:${id}:${failedBatchId}`); }
 
 // ---------- concurrency / double-spend guards ----------
 /** Short per-escrow mutex (SET NX EX) around any money move. Throws EscrowError("BUSY") if another one is running. */
