@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 delete process.env.UPSTASH_REDIS_REST_URL; delete process.env.UPSTASH_REDIS_REST_TOKEN;
 import { createTrip, addPassengerDetails, getTrip, type TripRecord } from "../lib/trips";
 import { captureAndBook, canPayForTrip, type BookingDeps } from "../lib/trip-booking";
-import { closestOffer, duffelTestKey, bookDuffelTest } from "../lib/duffel-booking";
+import { closestOffer, duffelTestKey, bookDuffelTest, e164, DuffelBookingError } from "../lib/duffel-booking";
 
 const OWNER = "a".repeat(32);
 const PAX = { firstName: "Test", lastName: "Traveller", dateOfBirth: "1990-01-01", email: "t@example.com", phone: "+15555550100", gender: "male" as const, title: "mr" as const };
@@ -84,4 +84,34 @@ test("Duffel: only duffel_test_ keys, closest test offer booked with passenger",
   const order = (bodies[1].data as { passengers: Array<Record<string, string>>; selected_offers: string[] });
   assert.equal(order.passengers[0].id, "pas_1"); assert.equal(order.passengers[0].family_name, "Traveller");
   assert.deepEqual(order.selected_offers, ["off_b"]);
+});
+
+test("Duffel: prefers Duffel Airways over other carriers, normalises phone", async () => {
+  const t = await newTrip(); const bodies: Record<string, unknown>[] = [];
+  const f = (async (url: string, init: RequestInit) => {
+    bodies.push(JSON.parse(String(init.body)));
+    const ok = (data: unknown) => new Response(JSON.stringify({ data }), { status: 201 });
+    if (String(url).includes("offer_requests")) return ok({ offers: [{ id: "off_ba", total_amount: "805.00", total_currency: "USD", passengers: [{ id: "pas_1" }], owner: { name: "British Airways", iata_code: "BA" } }, { id: "off_zz", total_amount: "300.00", total_currency: "USD", passengers: [{ id: "pas_1" }], owner: { name: "Duffel Airways", iata_code: "ZZ" } }] });
+    return ok({ id: "ord_1" });
+  }) as unknown as typeof fetch;
+  const b = await bookDuffelTest(t, { fetchImpl: f, env: { DUFFEL_API_KEY: "duffel_test_x" }, log: () => {} });
+  assert.equal(b.offerId, "off_zz");
+  assert.match((bodies[1].data as { passengers: Array<Record<string, string>> }).passengers[0].phone_number, /^\+\d+$/);
+  assert.equal(e164("0803 123 4567"), "+2348031234567"); assert.equal(e164("+44 (20) 7946-0958"), "+442079460958");
+});
+
+test("Duffel: airline internal_error retried once with fresh search + different offer; 4xx not retried", async () => {
+  const t = await newTrip(); let orders = 0; let searches = 0;
+  const mk = (failStatus: number, type = "airline_error", code = "internal_error") => (async (url: string) => {
+    const ok = (data: unknown) => new Response(JSON.stringify({ data }), { status: 201 });
+    if (String(url).includes("offer_requests")) { searches++; return ok({ offers: [{ id: "off_1", total_amount: "300", passengers: [{ id: "p" }], owner: { iata_code: "ZZ" } }, { id: "off_2", total_amount: "310", passengers: [{ id: "p" }], owner: { iata_code: "ZZ" } }] }); }
+    orders++;
+    if (orders === 1) return new Response(JSON.stringify({ errors: [{ type, code, message: "The airline responded with an internal_error error" }], meta: { request_id: "req_x" } }), { status: failStatus });
+    return ok({ id: "ord_ok" });
+  }) as unknown as typeof fetch;
+  const b = await bookDuffelTest(t, { fetchImpl: mk(502), env: { DUFFEL_API_KEY: "duffel_test_x" }, log: () => {} });
+  assert.equal(b.orderId, "ord_ok"); assert.equal(searches, 2); assert.equal(orders, 2);
+  orders = 0; searches = 0;
+  await assert.rejects(bookDuffelTest(t, { fetchImpl: mk(422, "validation_error", "invalid_phone_number"), env: { DUFFEL_API_KEY: "duffel_test_x" }, log: () => {} }), (e: DuffelBookingError) => e.detail.requestId === "req_x" && /invalid_phone_number/.test(e.message) && !e.retryable);
+  assert.equal(orders, 1);
 });
