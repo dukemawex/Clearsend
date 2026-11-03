@@ -29,6 +29,8 @@ export type WebhookDeps = {
   reconcilePayout(id: string, status: string, itemId?: string, errorCode?: string, batchId?: string): Promise<EscrowRecord>;
   activity(a: { ownerId?: string; subject: string; summary: string; data?: Record<string, unknown> }): Promise<void>;
   notifyTelegram(escrowId: string, text: string): Promise<void>;
+  /** Optional: read the failed payout item from PayPal to get its error code when the event lacks one. */
+  lookupPayoutError?(batchId?: string, itemId?: string): Promise<{ code?: string }>;
 };
 
 export type WebhookResult = { status: "duplicate" | "ignored" | "unmatched" | "reconciled" | "logged"; subject?: string; note?: string };
@@ -92,8 +94,9 @@ async function route(type: string, r: Record<string, any>, eventId: string, d: W
     await d.activity({ ownerId: escrow.ownerId, subject: escrow.id, summary: `PayPal webhook: ${type} for earlier payout batch ${batchId} (current batch ${escrow.payoutBatchId}). Recorded only.`, data });
     return { status: "logged", subject: escrow.id, note: "stale batch" };
   }
-  const code = isBatch ? payoutOutcome({ errors: r.errors ?? r.batch_header?.errors }).code : payoutOutcome(r).code;
+  let code = isBatch ? payoutOutcome({ errors: r.errors ?? r.batch_header?.errors }).code : payoutOutcome(r).code;
   const failed = isPayoutFailed(status) || isPayoutFailed(type.split(".").pop());
+  if (failed && !code && d.lookupPayoutError) code = (await d.lookupPayoutError(batchId ?? escrow.payoutBatchId, itemId ?? escrow.payoutItemId).catch(() => ({ code: undefined }))).code;
   const effective = failed && !isPayoutFailed(status) ? type.split(".").pop()! : status;
   await d.reconcilePayout(escrow.id, effective, itemId, code, batchId);
   await d.activity({ ownerId: escrow.ownerId, subject: escrow.id, summary: `PayPal confirms payout ${isBatch ? "batch" : "item"} status ${effective}${code ? ` (${code})` : ""} for ${escrow.recipient} (batch ${batchId ?? "?"}).`, data: { ...data, payoutStatus: effective, code } });

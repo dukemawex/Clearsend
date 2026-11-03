@@ -37,6 +37,8 @@ export const Receipt = z.object({
   fee: z.number(),
   /** Money that actually moved in this PayPal event: charged (funding), sent to recipient (payout), returned to payer (refund). */
   settledAmount: z.number().optional(),
+  /** Plain-English reason PayPal gave when a payout failed (code in status). */
+  failureReason: z.string().optional(),
   fx: z.object({
     destinationCurrency: z.string(),
     midMarketRate: z.number(),
@@ -95,6 +97,21 @@ export type BuildInput = {
   feeOverride?: { percent: number; amount: number };
 };
 
+/** Pure: re-states an escrow payout receipt with the current fee model (amount - 2.5% fee; no spread for same currency),
+ * so a receipt issued under older math never shows stale numbers. Keeps its mid-market rate, ids and time. */
+export function normalizeEscrowPayoutReceipt(r: Receipt, patch: { status?: string; failureReason?: string } = {}): Receipt {
+  if (r.kind !== "payout" || r.subjectType !== "escrow") return { ...r, ...patch };
+  const fee = escrowFee(r.amount), settledAmount = escrowPayoutAmount(r.amount);
+  const fx = r.fx ? (() => {
+    const same = spreadPercentFor(r.currency, r.fx.destinationCurrency) === 0;
+    const spreadPercent = same ? 0 : FX_SPREAD_PERCENT;
+    const midMarketRate = same ? 1 : r.fx.midMarketRate;
+    const customerRate = midMarketRate * (1 - spreadPercent / 100);
+    return { ...r.fx, midMarketRate, spreadPercent, customerRate, destinationAmount: r2(settledAmount * customerRate) };
+  })() : undefined;
+  return { ...r, feePercent: FEE_PERCENT, fee, settledAmount, ...(fx ? { fx } : {}), ...patch };
+}
+
 /** Pure: builds a receipt from values that were already stored or returned by PayPal. */
 export function buildReceipt(i: BuildInput): Receipt {
   const feePercent = i.feeOverride?.percent ?? FEE_PERCENT;
@@ -150,6 +167,7 @@ export function receiptText(r: Receipt): string {
     r.kind === "payout" ? `Paid in ${r.currency} to the recipient's PayPal account${r.recipientCountry ? ` (${r.recipientCountry})` : ""}; they withdraw to a local bank from PayPal. Unclaimed payouts return to the sender after 30 days.` : "",
     ...ids,
     `Status: ${r.status}`,
+    r.failureReason ? `Reason: ${r.failureReason}` : "",
     r.environment,
   ].filter(Boolean).join("\n");
 }
