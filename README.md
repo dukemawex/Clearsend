@@ -7,7 +7,7 @@
 ClearSend is an AI agent for worldwide journeys: send money across borders with clear FX rates and fees, search flights, and plan complete trips in one calm conversation. Built with PayPal sandbox APIs, NVIDIA NIM / OpenRouter, AI SDK, and the PayPal Agent Toolkit. Every money-moving action requires explicit human approval.
 
 **Live demo:** https://clearsend-sigma.vercel.app/  
-**Architecture:** Next.js 15 App Router → AI SDK streaming agent → PayPal Payouts + Orders + Agent Toolkit → Duffel/RapidAPI flights → approval-gated sandbox execution
+**Architecture:** Next.js 15 App Router → AI SDK streaming agent → PayPal Payouts + Orders + Agent Toolkit → Kernel (live Google Flights prices) + Duffel test bookings (RapidAPI optional) → approval-gated sandbox execution
 
 ---
 
@@ -58,7 +58,7 @@ Try these in the live demo or after local setup:
    Agent calculates remittance breakdown (fee, FX rate, amount received), then asks for recipient email for PayPal sandbox payout approval.
 
 2. **"Search flights from New York to Lagos"**  
-   Agent searches real flight offers via Duffel/RapidAPI and presents airline, price, duration, stops.
+   Agent searches live flight prices (Kernel reading Google Flights; RapidAPI optional) and presents airline, price, duration, stops.
 
 3. **"Plan a journey: remittance + flight in one conversation"**  
    Agent handles both tools, shows combined total, and requests separate approval for payout and flight order.
@@ -353,8 +353,8 @@ Escrow records are persisted server-side in Upstash Redis (via env `UPSTASH_REDI
 
 ClearSend tries providers in this order and returns the first non-empty result:
 
-1. **RapidAPI Sky Scrapper** via `RAPIDAPI_KEY`: real-time pricing (needs an active RapidAPI plan with quota)
-2. **Kernel + Google Flights** via `KERNEL_API_KEY` and `ENABLE_KERNEL_FALLBACK=true`: live market prices (see below)
+1. **RapidAPI Sky Scrapper** via `RAPIDAPI_KEY` (optional, secondary): tried first only when configured; if it has no quota or returns nothing, the chain moves on. On the live deployment its monthly quota is currently exhausted, so Kernel is the priced source in practice
+2. **Kernel + Google Flights** via `KERNEL_API_KEY` and `ENABLE_KERNEL_FALLBACK=true`: the primary priced source, live market prices (see below)
 3. **Duffel** test mode via `DUFFEL_API_KEY`: sample "Duffel Airways" data, used only if nothing better is found
 4. **Aviationstack** via `AVIATIONSTACK_API_KEY`: schedule only, no pricing
 5. **OpenSky Network** (free, anonymous): schedule only, no pricing
@@ -372,6 +372,17 @@ What ships (`lib/kernel-flights.ts`, `lib/duffel-booking.ts`, `lib/trip-booking.
 6. **Trip page.** `/trips/:id` shows search → pick → fund → booking reference → receipt, with links to Google Flights and the Kernel replay.
 
 Without `KERNEL_API_KEY` (or with `ENABLE_KERNEL_FALLBACK` not `true`) the Kernel source reports a clear provider error in the search's source list and the chain continues.
+
+### Two fee models: trips vs escrows
+
+- **Trips (flights):** the payer is charged the fare **plus a 3% ClearSend service fee** (e.g. a USD 427.00 fare is charged USD 439.81). The fee is shown as a separate line on `/plan` and the trip page before payment.
+- **Escrows:** the payer is charged **exactly the escrow amount**; ClearSend's 2.5% fee is withheld from the payout (USD 5.00 → recipient gets USD 4.87).
+- **Why they differ:** a trip has no recipient payout to deduct a fee from (the money goes to the booking), so the fee is added on top; an escrow pays a recipient, so the fee comes out of that payout.
+
+### Display details
+
+- Overnight arrivals show **"+1 day"** next to the arrival time.
+- Trip routes (`/api/trips/:id`, `/passenger`, `/book`) require the trip owner's per-visitor `cs_uid` cookie, so one visitor cannot read or book another visitor's trip.
 
 ### Honest pricing policy
 
@@ -590,7 +601,7 @@ x-clearsend-api-key: <your-key>
 
 **Test Flow 2: Travel Booking**
 1. Type: "Search flights from New York to Lagos"
-2. Agent searches flights (RapidAPI Sky Scrapper with fixed airport lookup)
+2. Agent searches flights (Kernel reading Google Flights live prices; RapidAPI Sky Scrapper is tried first only if its key has quota)
 3. Agent shows cheapest offer first (marked with `isCheapest: true`)
 4. Type: "Book the cheapest one"
 5. Agent creates PayPal order → approval URL returned
@@ -618,6 +629,16 @@ The architecture, sandbox walkthrough and setup previously on an in-app `/judges
 6. **Agent-Readable:** MCP endpoint exposes ClearSend's PayPal tools to external agents
 7. **End-to-End Flows:** Remittance, travel, escrow—complete journeys, not isolated demos
 8. **No Mock Data:** Real flight APIs, real FX calculations, real PayPal responses with proper formatting
+
+## Verified end to end (PayPal sandbox only)
+
+Exercised live on the production deployment on 2026-11-03 (and the escrow flows in the days before), PayPal **sandbox** only, no real money:
+
+- **Escrow:** fund (Orders v2 capture) → release (Payouts, 2.5% fee withheld) and, separately, fund → refund (full amount back to the payer).
+- **Denied payout + retry:** a payout batch DENIED by PayPal (`RECEIVER_COUNTRY_NOT_ALLOWED`) is recorded on the escrow with its reason, shown to the payer, and retried once via `POST /api/escrow/retry-payout` after PayPal confirms the failure.
+- **Flights:** Kernel search on Google Flights (live prices) → pick fare → PayPal sandbox funding with typed `CAPTURE` → Duffel test-mode booking with a booking reference on the trip and receipt.
+- **Refund on booking failure:** on one run Duffel's test mode returned an airline `internal_error`; the PayPal capture was refunded automatically and the trip marked refunded.
+- **Honesty note:** the Duffel test booking is a **Duffel Airways test fare priced differently from the Google Flights fare** (Duffel test mode only offers made-up fares). The UI labels prices "Live market price (Google Flights)" and bookings "Test booking via Duffel sandbox". No real ticket is issued.
 
 ## Failed payouts and retry
 
