@@ -11,6 +11,47 @@ ClearSend is an AI agent for worldwide journeys: send money across borders with 
 
 ---
 
+## How to test as a judge
+
+ClearSend runs on the **PayPal sandbox only**. No real money moves, and real PayPal logins or cards don't work. Flight prices are real market prices; bookings are test bookings. There is no sign-up, and each visitor's trips and escrows are private to their browser (a per-visitor `cs_uid` cookie).
+
+**1. Get PayPal sandbox accounts (free, about 2 minutes)**
+- Log in at [developer.paypal.com](https://developer.paypal.com/dashboard/accounts) → **Testing Tools → Sandbox Accounts** → **Create account** → **Personal**, country **United States**. Create one for the **buyer** and one for the escrow **recipient**. Use US Personal accounts: payouts to some countries are denied with `RECEIVER_COUNTRY_NOT_ALLOWED`.
+- Open each account's ⋮ menu → **View/Edit account** to read its email and password. Log in to the PayPal sandbox checkout with those, and pay with the account's default test funding source.
+- If PayPal says the sandbox payment method was declined at capture, pay again and choose another funding source (e.g. PayPal balance).
+
+**2. Flight path (about 3 minutes)**
+1. Open https://clearsend-sigma.vercel.app → **Plan a trip**.
+2. Search a route, e.g. `LOS` → `LHR`, with a date about 3+ weeks ahead. Fares are **live Google Flights prices read by a Kernel cloud browser**; the search takes a few seconds.
+3. Pick a fare, add passenger details, and press **Pay with PayPal (sandbox)**. Approve as your sandbox buyer.
+4. Back on ClearSend, type `CAPTURE`. ClearSend then makes a **Duffel sandbox test booking** and shows the booking reference and the receipt. Duffel's test mode books a "Duffel Airways" test flight whose price differs from the Google fare; the app labels both honestly. Trips add a 3% service fee on top of the fare.
+5. If the Duffel booking fails, the PayPal payment is **refunded automatically** and the trip shows it.
+
+**3. Escrow path**
+1. **Open an escrow** (`/escrow/new`): amount, payer, recipient (your US Personal sandbox email) and verifier. Write the spec, or upload a PDF/DOCX/TXT and let the AI extract deliverables and acceptance criteria for you to edit.
+2. As payer, fund it with the PayPal sandbox and type `CAPTURE`.
+3. Open the recipient link and submit the work as text or an uploaded document.
+4. Run **AI verify**: a free model checks each acceptance criterion. The AI never moves money.
+5. As payer, release by typing the exact phrase, e.g. `RELEASE 5.00 USD`. The payout goes to the recipient minus the 2.5% fee, and receipts appear at `/receipts`.
+6. Refund path: before release, the payer or verifier types `REFUND 5.00 USD` and the full captured amount goes back to the buyer. An escrow can be released or refunded, never both.
+
+**4. Other surfaces**
+- **Telegram:** add [@Moiffe_bot](https://t.me/Moiffe_bot) to a group with the payer, recipient and verifier; `/escrow` creates one, each party presses Start in a DM, and the same typed confirmations apply (`/help` lists commands).
+- **MCP:** `POST /api/mcp` exposes ClearSend's tools over MCP-over-HTTP.
+- **Agent chat:** `/agent` handles quotes, flight search and escrows in conversation (voice and document upload), and asks before any PayPal action.
+
+**Troubleshooting**
+
+| You see | What to do |
+| --- | --- |
+| "The sandbox payment method was declined" | Pay again and choose another funding source in the PayPal sandbox. |
+| Payout `RECEIVER_COUNTRY_NOT_ALLOWED` | The recipient must be a US Personal sandbox account. The payer can retry the failed payout once. |
+| A flight provider shows `error` (Kernel, RapidAPI quota) | Shown honestly per provider; results without a price are labelled "fare unavailable" and can't be booked. Retry or try another route. |
+| Can't see a trip or escrow from another browser | By design: data is private to each visitor's cookie; role links open escrows for other parties. |
+| A button won't act | Money steps need the exact typed text: `CAPTURE`, `RELEASE <amount> <currency>`, `REFUND <amount> <currency>`. |
+
+---
+
 ## How ClearSend uses PayPal and AI
 
 ClearSend is a cross-border escrow, remittance and flight-booking agent. Money moves only through PayPal (sandbox by default), and every money-moving step needs an explicit human confirmation. AI quotes, plans, reads specification documents and checks deliverables, but it never releases or refunds money on its own.
