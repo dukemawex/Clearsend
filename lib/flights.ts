@@ -408,6 +408,16 @@ async function searchDuffel(input: SearchInput, date: string): Promise<{ offers:
   }
 }
 
+/** Human-readable RapidAPI failure: status, provider message, and quota headers (never the key). */
+export function describeRapidApiError(status: number, headers: Headers, body: unknown): string {
+  const msg = asString(asRecord(body).message, "");
+  const quota: string[] = [];
+  headers.forEach((v, k) => { if (/^x-ratelimit-|^retry-after$/i.test(k)) quota.push(`${k.toLowerCase()}=${v}`); });
+  quota.sort();
+  const kind = status === 429 ? "rate limit or quota exceeded" : status === 403 ? "key not subscribed to Sky-Scrapper" : status === 401 ? "invalid key" : "request failed";
+  return `RapidAPI HTTP ${status} (${kind})${msg ? `: ${msg}` : ""}${quota.length ? ` [${quota.join(", ")}]` : " [no rate-limit headers]"}`;
+}
+
 async function rapidAirport(query: string, headers: HeadersInit, originalIataCode?: string): Promise<{ skyId: string; entityId: string } | null> {
   const cacheKey = `rapidapi:airport:${query}:${originalIataCode || ""}`;
   const cached = getCached<{ skyId: string; entityId: string }>(cacheKey);
@@ -417,11 +427,12 @@ async function rapidAirport(query: string, headers: HeadersInit, originalIataCod
     const url = `https://sky-scrapper.p.rapidapi.com/api/v1/flights/searchAirport?query=${encodeURIComponent(query)}&locale=en-US`;
     const response = await fetch(url, { headers, cache: "no-store" });
     
-    if (response.status === 429) {
-      throw new Error("RapidAPI rate limit exceeded (429)");
-    }
-    
     const body = await response.json().catch(() => ({}));
+    if (response.status === 429 || response.status === 401 || response.status === 403) {
+      const detail = describeRapidApiError(response.status, response.headers, body);
+      console.warn("rapidapi_airport_error", { query, detail });
+      throw new Error(detail);
+    }
     
     if (!response.ok) {
       const errorMsg = asString(asRecord(body).message, response.statusText);
@@ -570,14 +581,11 @@ async function searchRapidApi(input: SearchInput, date: string): Promise<{ offer
     // Try v1 endpoint with polling
     const v1Response = await fetch(`https://sky-scrapper.p.rapidapi.com/api/v1/flights/searchFlights?${v1Params}`, { headers, cache: "no-store" });
     
-    if (v1Response.status === 429) {
-      return { offers: [], status: "error", message: "RapidAPI quota/rate limit exceeded (429)" };
-    }
-    
-    if (v1Response.status === 403) {
+    if (v1Response.status === 429 || v1Response.status === 401 || v1Response.status === 403) {
       const errorBody = await v1Response.json().catch(() => ({}));
-      const errorMsg = asString(asRecord(errorBody).message, "Not subscribed to this endpoint");
-      return { offers: [], status: "error", message: `RapidAPI HTTP 403: ${errorMsg}` };
+      const detail = describeRapidApiError(v1Response.status, v1Response.headers, errorBody);
+      console.warn("rapidapi_search_error", { detail });
+      return { offers: [], status: "error", message: detail };
     }
     
     if (!v1Response.ok) {
