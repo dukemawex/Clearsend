@@ -51,7 +51,11 @@ export function parseGoogleFlightsLabels(labels: string[], i: KernelSearchInput)
     const currency = CUR_WORDS[p[2].trim().toLowerCase()] ?? (i.currency ?? "USD");
     if (!(price > 0)) continue;
     const leaves = /Leaves .*? at ([\d:]+\s?[AP]M)/i.exec(s)?.[1] ?? "";
-    const arrives = /arrives at .*? at ([\d:]+\s?[AP]M)/i.exec(s)?.[1] ?? "";
+    const arrTime = /arrives at .*? at ([\d:]+\s?[AP]M)/i.exec(s)?.[1] ?? "";
+    const depDay = /Leaves .*? at [\d:]+\s?[AP]M on ([^.]*?) and arrives/i.exec(s)?.[1]?.trim();
+    const arrDay = /arrives at .*? at [\d:]+\s?[AP]M on ([^.]*?)\./i.exec(s)?.[1]?.trim();
+    const days = dayDiff(depDay, arrDay, i.date);
+    const arrives = arrTime && days > 0 ? `${arrTime} +${days} day${days > 1 ? "s" : ""}` : arrTime;
     const duration = /Total duration ([^.]+)\./i.exec(s)?.[1];
     const stops = /nonstop/i.test(w[1]) ? 0 : Number(w[2]);
     const airline = w[3].replace(/\s+and\s+/g, ", ").trim();
@@ -177,4 +181,16 @@ export async function searchKernelFares(i: KernelSearchInput, deps: KernelDeps =
     if (timer) clearTimeout(timer);
     if (b) { try { await client.browsers.deleteByID(b.session_id); } catch { /* session times out anyway */ } }
   }
+}
+
+/** Days between "Tuesday, December 1" and "Wednesday, December 2" (year from the search date); 0 if unknown. */
+export function dayDiff(dep: string | undefined, arr: string | undefined, date: string): number {
+  if (!dep || !arr || dep === arr) return 0;
+  const y = Number(date.slice(0, 4)) || new Date().getUTCFullYear();
+  const t = (x: string) => Date.parse(`${x.replace(/^[A-Za-z]+,\s*/, "")} ${y} UTC`);
+  const a = t(dep), b = t(arr);
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return 0;
+  let d = Math.round((b - a) / 86400000);
+  if (d < 0) d += Math.round((Date.UTC(y + 1, 0, 1) - Date.UTC(y, 0, 1)) / 86400000); // Dec 31 -> Jan 1
+  return d > 0 && d < 4 ? d : 0;
 }

@@ -96,6 +96,22 @@ export const TripRecord = z.object({
 });
 export type TripRecord = z.infer<typeof TripRecord>;
 
+/** Drop null values (top level and kernelEvidence) so optional fields stored or sent as null parse. Receipts keep their own nullable fields. */
+export function stripNulls<T>(v: T): T {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return v;
+  const out: Record<string, unknown> = {};
+  for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
+    if (x === null) continue;
+    out[k] = k === "kernelEvidence" ? stripNulls(x) : x;
+  }
+  return out as T;
+}
+
+/** Tolerant parse: accepts records saved with null optional fields (e.g. Kernel fares with airlineCode: null). */
+export function parseTripRecord(raw: unknown): TripRecord {
+  return TripRecord.parse(stripNulls(raw));
+}
+
 export class TripError extends Error {
   constructor(message: string, public readonly code: string = "TRIP_ERROR") {
     super(message);
@@ -200,20 +216,21 @@ export async function createTrip(input: {
   destination: string;
   departureDate: string;
   airline: string;
-  airlineCode?: string;
-  flightNumber?: string;
-  duration?: string;
+  airlineCode?: string | null;
+  flightNumber?: string | null;
+  duration?: string | null;
   stops: number;
   departureTime: string;
   arrivalTime: string;
   basePrice: number;
   currency: string;
   provider: "kernel" | "duffel" | "rapidapi" | "aviationstack";
-  providerOfferId?: string;
-  priceLabel?: string;
-  kernelEvidence?: TripRecord["kernelEvidence"];
+  providerOfferId?: string | null;
+  priceLabel?: string | null;
+  kernelEvidence?: TripRecord["kernelEvidence"] | null;
   ownerId?: string | null;
 }): Promise<TripRecord> {
+  input = stripNulls(input);
   const ownerId = input.ownerId !== undefined ? input.ownerId : await currentOwner();
   const id = `trip_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
   const now = Date.now();
@@ -221,7 +238,7 @@ export async function createTrip(input: {
   const serviceFee = input.basePrice * 0.03; // 3% service fee
   const totalPrice = input.basePrice + serviceFee;
   
-  const trip: TripRecord = {
+  const trip: TripRecord = stripNulls({
     id,
     ownerId: ownerId ?? undefined,
     state: "draft",
@@ -246,7 +263,8 @@ export async function createTrip(input: {
     createdAt: now,
     updatedAt: now,
     timeline: [{ state: "draft", timestamp: now }],
-  };
+  } as TripRecord);
+  TripRecord.parse(trip);
   
   await getStorage().set(`trip:${id}`, JSON.stringify(trip));
   console.info("trip_created", { id, origin: input.origin, destination: input.destination });
@@ -259,7 +277,7 @@ export async function getTrip(id: string): Promise<TripRecord | null> {
   const raw = await getStorage().get(`trip:${id}`);
   if (!raw) return null;
   try {
-    return TripRecord.parse(JSON.parse(raw));
+    return parseTripRecord(JSON.parse(raw));
   } catch (error) {
     console.error("trip_parse_error", { id, error });
     return null;
@@ -279,7 +297,7 @@ async function listAllTrips(userId?: string): Promise<TripRecord[]> {
     .filter((raw): raw is string => raw !== null)
     .map((raw) => {
       try {
-        return TripRecord.parse(JSON.parse(raw));
+        return parseTripRecord(JSON.parse(raw));
       } catch {
         return null;
       }
