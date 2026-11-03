@@ -199,19 +199,34 @@ Escrow records are persisted server-side in Upstash Redis (via env `UPSTASH_REDI
 
 ClearSend tries providers in this order and returns the first non-empty result:
 
-1. Duffel test mode via `DUFFEL_API_KEY`.
-2. RapidAPI Sky Scrapper via `RAPIDAPI_KEY`.
-3. Aviationstack via `AVIATIONSTACK_API_KEY`.
-4. Optional Kernel browser fallback, only when `ENABLE_KERNEL_FALLBACK=true` and `KERNEL_API_KEY` is configured.
+1. **RapidAPI Sky Scrapper** via `RAPIDAPI_KEY` - Real-time pricing with retry logic and caching
+2. **Duffel** test mode via `DUFFEL_API_KEY` - Test/sample flight data
+3. **Aviationstack** via `AVIATIONSTACK_API_KEY` - Live flight status (schedule only, no pricing)
+4. **OpenSky Network** (free, anonymous) - Real recent/live departures and arrivals per airport (schedule only, no pricing)
+5. **OpenFlights** database (free, GitHub-hosted) - Route database to confirm which airlines fly a route (schedule only, no pricing)
+6. Optional **Kernel browser** fallback, only when `ENABLE_KERNEL_FALLBACK=true` and `KERNEL_API_KEY` is configured
 
-The agent accepts IATA codes or city names and returns airline, price, times, stops, and duration. Provider errors are logged and the next provider is tried. If all providers fail, ClearSend returns a clear error instead of inventing an offer.
+### Honest pricing policy
+
+**ClearSend NEVER fabricates prices.** Flight offers are clearly labeled:
+
+- **Priced offers** from RapidAPI or Duffel show real fares and can be booked with PayPal
+- **Schedule-only offers** from Aviationstack, OpenSky, or OpenFlights show `price: null` and are labeled "schedule only - fare unavailable"
+- The agent honestly explains when a fare is unavailable and offers to get a priced quote via RapidAPI/Duffel when available
+- **Booking/payment requires a priced offer** - the agent will not attempt PayPal checkout for schedule-only flights and explains it can't charge without a real fare
+
+The agent accepts IATA codes or city names and returns airline, price (if available), times, stops, and duration. Provider errors are logged and the next provider is tried. If all providers fail, ClearSend returns a clear error instead of inventing an offer.
 
 ### Free provider keys
 
-- **Duffel:** create a test account at [duffel.com](https://duffel.com), then copy a `duffel_test_` token from the dashboard.
-- **RapidAPI:** create a free account at [rapidapi.com](https://rapidapi.com), subscribe to the Sky Scrapper / Air Scraper BASIC plan, and copy `RAPIDAPI_KEY`.
-- **Aviationstack:** create a free account at [aviationstack.com](https://aviationstack.com) and copy the access key.
+- **RapidAPI:** create a free account at [rapidapi.com](https://rapidapi.com), subscribe to the Sky Scrapper / Air Scraper BASIC plan, and copy `RAPIDAPI_KEY`. **Real-time pricing with retry logic and caching.**
+- **Duffel:** create a test account at [duffel.com](https://duffel.com), then copy a `duffel_test_` token from the dashboard. **Test/sample data only.**
+- **Aviationstack:** create a free account at [aviationstack.com](https://aviationstack.com) and copy the access key. **Live flight status, schedule only, no pricing.**
+- **OpenSky Network:** **Free, no signup required.** Anonymous access to real recent/live flight data. Optional: set `OPENSKY_USERNAME` and `OPENSKY_PASSWORD` for higher rate limits. **Schedule only, no pricing.**
+- **OpenFlights:** **Free, no signup required.** Route database from [github.com/jpatokal/openflights](https://github.com/jpatokal/openflights) fetched and cached server-side. **Schedule only, no pricing.**
 - **Kernel:** create an account at [onkernel.com](https://onkernel.com), copy the API key, and explicitly enable the fallback flag. Browser search is never the default.
+
+**Important:** Only RapidAPI and Duffel provide pricing. All other providers return schedule-only data with `price: null` and are labeled "schedule only - fare unavailable". The agent will not attempt PayPal checkout for schedule-only flights.
 
 For a complete conversation, ask ClearSend to calculate a transfer and find a flight in one request. It will show both results, a combined total, and separate approval controls before any PayPal action.
 
