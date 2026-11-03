@@ -382,7 +382,7 @@ async function searchRapidApi(input: SearchInput, date: string): Promise<{ offer
     
     const data = asRecord(body.data);
     const context = asRecord(data.context);
-    statusValue = context.status !== undefined ? context.status : body.status;
+    statusValue = (context.status !== undefined ? context.status : body.status) as string | boolean;
     sessionId = asString(context.sessionId) || null;
     
     // Handle boolean status
@@ -416,7 +416,7 @@ async function searchRapidApi(input: SearchInput, date: string): Promise<{ offer
       body = asRecord(await incompleteResponse.json().catch(() => ({})));
       const polledData = asRecord(body.data);
       const polledContext = asRecord(polledData.context);
-      statusValue = polledContext.status !== undefined ? polledContext.status : body.status;
+      statusValue = (polledContext.status !== undefined ? polledContext.status : body.status) as string | boolean;
       
       const polledStatusString = typeof statusValue === "boolean"
         ? (statusValue ? "complete" : "incomplete")
@@ -455,7 +455,7 @@ async function searchRapidApi(input: SearchInput, date: string): Promise<{ offer
       const leg = asRecord(legs[0]);
       const segments = Array.isArray(leg.segments) ? leg.segments : [];
       const segment = asRecord(segments[0]);
-      const marketingCarriers = Array.isArray(asRecord(leg.carriers).marketing) ? asRecord(leg.carriers).marketing : [];
+      const marketingCarriers: unknown[] = Array.isArray(asRecord(leg.carriers).marketing) ? asRecord(leg.carriers).marketing as unknown[] : [];
       const firstCarrier = asRecord(marketingCarriers[0]);
       const price = asRecord(itinerary.price);
       return {

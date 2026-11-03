@@ -1,4 +1,4 @@
-import { createHmac } from "crypto";
+import { createHmac, timingSafeEqual } from "crypto";
 
 function getSecret(): string {
   const secret = process.env.ESCROW_LINK_SECRET;
@@ -25,7 +25,7 @@ export function verifyEscrowToken(escrowId: string, role: EscrowRole, token: str
   const tokenBuffer = Buffer.from(token);
   if (expectedBuffer.length !== tokenBuffer.length) return false;
   try {
-    return require("crypto").timingSafeEqual(expectedBuffer, tokenBuffer);
+    return timingSafeEqual(expectedBuffer, tokenBuffer);
   } catch {
     return false;
   }

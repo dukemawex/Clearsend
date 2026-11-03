@@ -1,12 +1,12 @@
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
-import { listEscrows } from "@/lib/escrow";
+import { listEscrows, type EscrowRecord } from "@/lib/escrow";
 
 export const dynamic = "force-dynamic";
 
 export default async function EscrowDashboardPage() {
-  let escrows;
+  let escrows: EscrowRecord[];
   try {
     escrows = await listEscrows();
   } catch {

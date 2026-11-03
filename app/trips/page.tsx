@@ -1,11 +1,11 @@
 import { TripCard } from "@/components/TripCard";
-import { listTrips } from "@/lib/trips";
+import { listTrips, type TripRecord } from "@/lib/trips";
 import Link from "next/link";
 
 export const dynamic = "force-dynamic";
 
 export default async function TripsPage() {
-  let trips;
+  let trips: TripRecord[];
   try {
     trips = await listTrips();
   } catch {
