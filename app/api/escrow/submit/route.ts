@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { submitDeliverable } from "@/lib/escrow";
-import { verifyEscrowToken, type EscrowRole } from "@/lib/escrow-links";
+import { getEscrow, submitDeliverable } from "@/lib/escrow";
+import { authorizeEscrow } from "@/lib/escrow-auth";
 import { z } from "zod";
 
 const SubmitDeliverableSchema = z.object({
@@ -15,18 +15,10 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { escrowId, deliverable, role, token } = SubmitDeliverableSchema.parse(body);
     
-    const serviceKey = request.headers.get("x-clearsend-api-key");
-    const hasValidServiceKey = serviceKey && serviceKey === process.env.CLEAR_SEND_API_KEY;
-    
-    if (!hasValidServiceKey) {
-      if (!role || !token) {
-        return NextResponse.json({ error: "Missing role or token" }, { status: 401 });
-      }
-      
-      if (!verifyEscrowToken(escrowId, role as EscrowRole, token)) {
-        return NextResponse.json({ error: "Invalid token for this role" }, { status: 403 });
-      }
-    }
+    const target = await getEscrow(escrowId);
+    if (!target) return NextResponse.json({ error: "Escrow not found" }, { status: 404 });
+    const auth = authorizeEscrow(request, target, "submit", { role, token });
+    if (!auth.ok) return auth.res;
     
     const updated = await submitDeliverable(escrowId, deliverable);
     return NextResponse.json(updated);

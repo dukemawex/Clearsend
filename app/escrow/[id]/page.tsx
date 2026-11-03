@@ -96,21 +96,21 @@ export default function EscrowPage() {
   };
 
   const handleRelease = async () => {
-    const typedRelease = prompt(`Type the exact amount to release (${escrow?.amount.toFixed(2)} ${escrow?.currency}) to pay ${escrow?.recipient} via PayPal Payout. This cannot be undone.`);
-    if (!escrow || typedRelease?.trim() !== `${escrow.amount.toFixed(2)} ${escrow.currency}`) {
-      if (typedRelease !== null) alert("That did not match. Nothing was released.");
-      return;
-    }
+    if (!escrow) return;
+    const phrase = `RELEASE ${escrow.amount.toFixed(2)} ${escrow.currency}`;
+    const typedRelease = prompt(`Type ${phrase} to pay ${escrow.recipient} via PayPal Payout. This cannot be undone.`);
+    if (typedRelease === null) return;
+    if (typedRelease.trim().replace(/\s+/g, " ").toUpperCase() !== phrase) { alert("That did not match. Nothing was released."); return; }
 
     setIsSubmitting(true);
     try {
       const res = await fetch(`/api/escrow/release`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ escrowId: id, role, token }),
+        body: JSON.stringify({ escrowId: id, role, token, confirmation: typedRelease }),
       });
 
-      if (!res.ok) throw new Error("Failed to release funds");
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Failed to release funds");
       
       await loadEscrow();
       alert("Funds released successfully!");
@@ -128,7 +128,7 @@ export default function EscrowPage() {
     if (typed?.trim() !== want) { if (typed !== null) alert("That did not match. No order was created."); return; }
     setIsSubmitting(true);
     try {
-      const res = await fetch(`/api/escrow/fund`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ escrowId: id }) });
+      const res = await fetch(`/api/escrow/fund`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ escrowId: id, role, token }) });
       const j = await res.json().catch(() => ({}));
       if (!res.ok || !j.approveUrl) throw new Error(j.error || "PayPal returned no approval link");
       setApproveUrl(j.approveUrl);
@@ -140,21 +140,21 @@ export default function EscrowPage() {
   };
 
   const handleRefund = async () => {
-    const typedRefund = prompt(`Type REFUND to return ${escrow?.amount.toFixed(2)} ${escrow?.currency} to the payer via PayPal. This cannot be undone.`);
-    if (typedRefund?.trim() !== "REFUND") {
-      if (typedRefund !== null) alert("That did not match. Nothing was refunded.");
-      return;
-    }
+    if (!escrow) return;
+    const phrase = `REFUND ${escrow.amount.toFixed(2)} ${escrow.currency}`;
+    const typedRefund = prompt(`Type ${phrase} to return the money to the payer via PayPal. This cannot be undone.`);
+    if (typedRefund === null) return;
+    if (typedRefund.trim().replace(/\s+/g, " ").toUpperCase() !== phrase) { alert("That did not match. Nothing was refunded."); return; }
 
     setIsSubmitting(true);
     try {
       const res = await fetch(`/api/escrow/refund`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ escrowId: id, role, token }),
+        body: JSON.stringify({ escrowId: id, role, token, confirmation: typedRefund }),
       });
 
-      if (!res.ok) throw new Error("Failed to refund escrow");
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Failed to refund escrow");
       
       await loadEscrow();
       alert("Escrow refunded successfully!");
@@ -467,7 +467,7 @@ export default function EscrowPage() {
               </Button>
             )}
 
-            {role === "payer" && ["funded", "submitted", "rejected"].includes(escrow.state) && (
+            {(role === "payer" || role === "verifier") && ["funded", "submitted", "rejected"].includes(escrow.state) && (
               <Button 
                 onClick={handleRefund} 
                 disabled={isSubmitting}

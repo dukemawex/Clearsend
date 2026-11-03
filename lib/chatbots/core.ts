@@ -1,10 +1,11 @@
 // Platform-neutral escrow bot logic used by the Telegram bot.
 // Reuses lib/escrow, lib/escrow-links, lib/fx, lib/paypal, lib/documents and the shared verifier.
 import { randomBytes } from "crypto";
-import { attachEscrowDocument, payoutReceiver, createEscrow, fundEscrow, getEscrow, refundEscrow, releaseEscrow, submitDeliverable, verifyDeliverable, type EscrowRecord } from "@/lib/escrow";
+import { attachEscrowDocument, bindOrderToEscrow, claimSettlement, releaseSettlementClaim, withEscrowLock, payoutReceiver, createEscrow, fundEscrow, getEscrow, refundEscrow, releaseEscrow, submitDeliverable, verifyDeliverable, type EscrowRecord } from "@/lib/escrow";
 import { createEscrowLink, verifyEscrowToken } from "@/lib/escrow-links";
 import { getMidMarketRate } from "@/lib/fx";
-import { captureErrorMessage, captureOrder, createOrder, createPayout, refundCapture } from "@/lib/paypal";
+import { captureErrorMessage, captureOrder, createOrder, createPayout, getOrder, PayPalError, refundCapture } from "@/lib/paypal";
+import { checkOrderMatchesEscrow } from "@/lib/order-check";
 import { extractDocument, type ExtractedDocument } from "@/lib/documents";
 import { checkPayoutEligibility, PAYOUT_COUNTRIES, PAYOUT_CURRENCIES } from "@/lib/payout-countries";
 import { extractSpec, specToText, type StructuredSpec } from "@/lib/spec";
@@ -425,10 +426,31 @@ async function execute(ctx: Ctx, nonce: string, p: Pending): Promise<Reply> {
   if (!escrow) return noEscrow;
   const g = await guard(ctx, escrow, p.action); if (g) return g; // role re-checked at execution time
   try {
+    return await withEscrowLock(escrow.id, () => executeLocked(ctx, p));
+  } catch (e) {
+    await logActivity({ platform: ctx.platform, chatId: ctx.chatId, userId: ctx.userId, action: p.action, escrowId: escrow.id, ok: false, note: errMsg(e) });
+    if (p.action === "capture") return { text: `${captureErrorMessage(e)}\nRun fund again to get a fresh "I approved" button (the same PayPal order is reused until it expires).`, buttons: [{ label: "Fund again", id: `act:fund:${escrow.id}` }] };
+    return { text: `${p.action} failed: ${errMsg(e)}` };
+  }
+}
+
+/** PayPal refused before moving money (4xx): drop the settlement claim so a retry is possible. */
+async function undoClaimOn4xx<T>(id: string, fn: () => Promise<T>): Promise<T> {
+  try { return await fn(); } catch (e) { if (e instanceof PayPalError && e.status >= 400 && e.status < 500) await releaseSettlementClaim(id); throw e; }
+}
+
+/** Runs under the per-escrow lock; re-reads state so two confirmations can't both move money. */
+async function executeLocked(ctx: Ctx, p: Pending): Promise<Reply> {
+  const escrow = await getEscrow(p.escrowId);
+  if (!escrow) return noEscrow;
     if (p.action === "capture") {
       const order = await getJSON<{ orderId: string }>(k("order", escrow.id));
       if (!order) return { text: "No PayPal order found; run fund again." };
       if (escrow.state !== "created") return { text: `Escrow is already ${escrow.state}.` };
+      const live = await getOrder(order.orderId);
+      const bad = checkOrderMatchesEscrow(live, escrow);
+      if (bad) return { text: `PayPal order rejected: ${bad}.` };
+      if (!(await bindOrderToEscrow(order.orderId, escrow.id))) return { text: "PayPal order rejected: it is already used for another escrow." };
       const cap = await captureOrder(order.orderId);
       const captureId = cap.purchase_units?.[0]?.payments?.captures?.[0]?.id as string | undefined;
       if (!captureId) throw new Error("PayPal returned no capture id");
@@ -440,7 +462,9 @@ async function execute(ctx: Ctx, nonce: string, p: Pending): Promise<Reply> {
     if (p.action === "release") {
       if (escrow.state !== "verified" || !escrow.evaluationResult?.met) return { text: `Escrow is ${escrow.state}; release needs AI verification.` };
       const rcv = payoutReceiver(escrow); if (!rcv) return { text: "No recipient PayPal email/phone/ID on this escrow." };
-      const payout = await createPayout({ ...rcv, amount: escrow.amount, currency: escrow.currency, note: `ClearSend Escrow Release: ${escrow.specification.slice(0, 100)}`, senderItemId: escrow.id });
+      const claim = await claimSettlement(escrow.id, "release");
+      if (!claim.ok) return { text: `Escrow was already settled (${claim.by}).` };
+      const payout = await undoClaimOn4xx(escrow.id, () => createPayout({ ...rcv, amount: escrow.amount, currency: escrow.currency, note: `ClearSend Escrow Release: ${escrow.specification.slice(0, 100)}`, senderItemId: escrow.id }));
       const batchId = payout.batch_header?.payout_batch_id as string | undefined;
       if (!batchId) throw new Error("PayPal returned no payout batch id");
       const released = await releaseEscrow(escrow.id, batchId, payout.items?.[0]?.payout_item_id, payout.batch_header?.batch_status);
@@ -448,15 +472,14 @@ async function execute(ctx: Ctx, nonce: string, p: Pending): Promise<Reply> {
       return withReceipt(released, "payout", `Released. ${money(escrow.amount, escrow.currency)} sent to ${escrow.recipient} via PayPal Payouts (sandbox batch ${batchId}).`);
     }
     if (!escrow.captureId || !["funded", "submitted", "rejected"].includes(escrow.state)) return { text: `Escrow is ${escrow.state}; nothing to refund.` };
-    const r = await refundCapture(escrow.captureId, { value: escrow.amount.toFixed(2), currency: escrow.currency }, "ClearSend escrow refund (chat)");
+    const claim = await claimSettlement(escrow.id, "refund");
+    if (!claim.ok) return { text: `Escrow was already settled (${claim.by}).` };
+    const captureId = escrow.captureId;
+    const r = await undoClaimOn4xx(escrow.id, () => refundCapture(captureId, { value: escrow.amount.toFixed(2), currency: escrow.currency }, "ClearSend escrow refund (chat)"));
     const refunded = await refundEscrow(escrow.id, r.id as string, r.status as string | undefined);
     await logActivity({ platform: ctx.platform, chatId: ctx.chatId, userId: ctx.userId, action: "refund", escrowId: escrow.id, ok: true });
     return withReceipt(refunded, "refund", `Refunded ${money(escrow.amount, escrow.currency)} to the payer (PayPal sandbox refund ${r.id}).`);
-  } catch (e) {
-    await logActivity({ platform: ctx.platform, chatId: ctx.chatId, userId: ctx.userId, action: p.action, escrowId: escrow.id, ok: false, note: errMsg(e) });
-    if (p.action === "capture") return { text: `${captureErrorMessage(e)}\nRun fund again to get a fresh "I approved" button (the same PayPal order is reused until it expires).`, buttons: [{ label: "Fund again", id: `act:fund:${escrow.id}` }] };
-    return { text: `${p.action} failed: ${errMsg(e)}` };
-  }
+
 }
 
 /** Group gets the token-free receipt summary; the payer gets a DM with their private receipt link. */

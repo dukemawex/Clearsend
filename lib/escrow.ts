@@ -80,6 +80,15 @@ class MemoryStorage {
     this.store.set(key, value);
   }
   
+  async setNX(key: string, value: string, ttlSec?: number): Promise<boolean> {
+    const cur = this.store.get(key); const exp = this.exp.get(key);
+    if (cur !== undefined && (!exp || exp > Date.now())) return false;
+    this.store.set(key, value); if (ttlSec) this.exp.set(key, Date.now() + ttlSec * 1000); else this.exp.delete(key);
+    return true;
+  }
+  private exp = new Map<string, number>();
+  async del(key: string): Promise<void> { this.store.delete(key); this.exp.delete(key); }
+
   async keys(pattern: string): Promise<string[]> {
     const prefix = pattern.replace("*", "");
     return Array.from(this.store.keys()).filter((k) => k.startsWith(prefix));
@@ -115,6 +124,16 @@ class UpstashStorage {
     if (!response.ok) throw new Error(`Upstash SET failed: ${response.status}`);
   }
   
+  private async cmd(args: string[]): Promise<unknown> {
+    const response = await fetch(this.baseUrl, { method: "POST", headers: { Authorization: `Bearer ${this.token}`, "content-type": "application/json" }, body: JSON.stringify(args), cache: "no-store" });
+    if (!response.ok) throw new Error(`Upstash ${args[0]} failed: ${response.status}`);
+    return ((await response.json()) as { result: unknown }).result;
+  }
+  async setNX(key: string, value: string, ttlSec?: number): Promise<boolean> {
+    return (await this.cmd(["SET", key, value, "NX", ...(ttlSec ? ["EX", String(ttlSec)] : [])])) === "OK";
+  }
+  async del(key: string): Promise<void> { await this.cmd(["DEL", key]); }
+
   async keys(pattern: string): Promise<string[]> {
     const response = await fetch(`${this.baseUrl}/keys/${encodeURIComponent(pattern)}`, {
       headers: { Authorization: `Bearer ${this.token}` },
@@ -384,4 +403,26 @@ export async function reconcilePayoutStatus(id: string, payoutStatus: string, pa
   if (!e) throw new EscrowError(`Escrow ${id} not found`, "NOT_FOUND");
   const receipts = (e.receipts ?? []).map((r) => (r.kind === "payout" ? { ...r, status: payoutStatus } : r));
   return updateEscrow(id, { payoutStatus, payoutItemId: e.payoutItemId ?? payoutItemId, receipts });
+}
+
+// ---------- concurrency / double-spend guards ----------
+/** Short per-escrow mutex (SET NX EX) around any money move. Throws EscrowError("BUSY") if another one is running. */
+export async function withEscrowLock<T>(id: string, fn: () => Promise<T>, ttlSec = 60): Promise<T> {
+  const key = `lock:escrow:${id}`;
+  if (!(await getStorage().setNX(key, String(Date.now()), ttlSec))) throw new EscrowError(`Another payment action is already running for escrow ${id}. Try again in a minute.`, "BUSY");
+  try { return await fn(); } finally { await getStorage().del(key).catch(() => {}); }
+}
+/** Permanent one-way claim: an escrow can be paid out OR refunded once, never both. Returns false if already claimed. */
+export async function claimSettlement(id: string, kind: "release" | "refund"): Promise<{ ok: true } | { ok: false; by: string }> {
+  const key = `settle:escrow:${id}`;
+  if (await getStorage().setNX(key, kind)) return { ok: true };
+  return { ok: false, by: (await getStorage().get(key)) ?? "unknown" };
+}
+/** Undo a claim only when PayPal rejected the move before any money left (so a retry is possible). */
+export async function releaseSettlementClaim(id: string) { await getStorage().del(`settle:escrow:${id}`); }
+/** A PayPal order funds exactly one escrow. Returns false if the order is already bound to a different escrow. */
+export async function bindOrderToEscrow(orderId: string, id: string): Promise<boolean> {
+  const key = `order:escrow:${orderId}`;
+  if (await getStorage().setNX(key, id)) return true;
+  return (await getStorage().get(key)) === id;
 }

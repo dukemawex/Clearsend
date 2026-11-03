@@ -249,11 +249,13 @@ Escrow records are persisted server-side in Upstash Redis (via env `UPSTASH_REDI
 ### Escrow API Routes
 
 - `POST /api/escrow/create` - Create a new escrow
-- `POST /api/escrow/fund` - Fund an escrow (create order or capture existing order)
-- `POST /api/escrow/submit` - Submit deliverable for verification
-- `POST /api/escrow/verify` - Evaluate deliverable with LLM
-- `POST /api/escrow/release` - Release funds to recipient (requires human approval)
-- `POST /api/escrow/refund` - Refund captured payment to payer
+- `POST /api/escrow/fund` - **payer** only. Without `orderId`: creates a PayPal order with `custom_id: escrow:<id>`. With `orderId`: ClearSend reads the order from PayPal and captures only if `custom_id`, amount and currency match this escrow, the order is approved, and the order isn't bound to another escrow
+- `POST /api/escrow/submit` - **recipient** only
+- `POST /api/escrow/verify` - **verifier** only (or the service key)
+- `POST /api/escrow/release` - **payer** only, after AI verification. Body must include `confirmation: "RELEASE <amount> <CUR>"` (e.g. `RELEASE 5.00 USD`), checked on the server; otherwise 400
+- `POST /api/escrow/refund` - **payer or verifier** (same rule as Telegram). Body must include `confirmation: "REFUND <amount> <CUR>"`
+
+**Authorization:** every per-escrow call needs `role` + `token` from that role's link (no credential -> 401; bad token or a role that may not do the action -> 403), the `x-clearsend-api-key` service key, or the creator's own browser cookie, which counts as the payer (the creator is the payer). **Double-spend protection:** fund, release and refund run under a per-escrow Redis lock (`SET NX EX`), re-read state inside the lock, and release/refund take a permanent one-way settlement claim (`SET NX`), so an escrow is paid out or refunded once, never both. A PayPal order is bound to one escrow (`SET NX`).
 - `GET /api/escrow/[id]` - Get escrow details by ID
 
 ### Escrow Agent Tools
