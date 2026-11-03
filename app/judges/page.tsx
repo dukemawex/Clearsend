@@ -152,7 +152,7 @@ export default function JudgesPage() {
             </p>
             <ul style={{ fontSize: "14px", color: "#6b21a8", lineHeight: "1.8", paddingLeft: "20px" }}>
               <li>calculateRemittance (with displayStrings)</li>
-              <li>searchFlights (Duffel, RapidAPI)</li>
+              <li>searchFlights (multi-provider with failover)</li>
               <li>createPayout (approval-gated)</li>
               <li>createOrder (approval-gated)</li>
               <li>captureOrder</li>
@@ -160,6 +160,52 @@ export default function JudgesPage() {
             </ul>
           </div>
         </div>
+      </section>
+
+      <section style={{ marginBottom: "48px", padding: "24px", background: "#f0f9ff", borderRadius: "8px", border: "1px solid #bae6fd" }}>
+        <h2 style={{ fontSize: "24px", fontWeight: "600", marginBottom: "16px", color: "#0c4a6e" }}>✈️ Flight Data Sources & Honest Pricing Policy</h2>
+        
+        <p style={{ fontSize: "16px", lineHeight: "1.6", marginBottom: "16px", color: "#0c4a6e" }}>
+          <strong>ClearSend NEVER fabricates prices.</strong> Flight offers are clearly labeled and the agent is honest about availability:
+        </p>
+
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "16px", marginBottom: "24px" }}>
+          <div style={{ padding: "16px", background: "#dcfce7", borderRadius: "8px", border: "2px solid #86efac" }}>
+            <strong style={{ display: "block", marginBottom: "8px", color: "#166534" }}>✅ Priced Offers (RapidAPI, Duffel)</strong>
+            <p style={{ fontSize: "14px", color: "#166534", margin: 0 }}>Real fares with prices - can be booked with PayPal</p>
+          </div>
+          <div style={{ padding: "16px", background: "#fef3c7", borderRadius: "8px", border: "2px solid #fcd34d" }}>
+            <strong style={{ display: "block", marginBottom: "8px", color: "#92400e" }}>⚠️ Schedule-Only (Aviationstack, OpenSky, OpenFlights)</strong>
+            <p style={{ fontSize: "14px", color: "#92400e", margin: 0 }}>No pricing data - labeled &quot;schedule only - fare unavailable&quot;</p>
+          </div>
+        </div>
+
+        <h3 style={{ fontSize: "18px", fontWeight: "600", marginBottom: "12px", color: "#0c4a6e" }}>Flight Provider Chain (in order)</h3>
+        <ol style={{ fontSize: "15px", lineHeight: "1.8", color: "#0c4a6e", paddingLeft: "24px" }}>
+          <li><strong>RapidAPI Sky Scrapper</strong> - Real-time pricing with exponential backoff retry (up to 6 retries), Retry-After header support, 10-minute caching</li>
+          <li><strong>Duffel</strong> - Test/sample flight data (priced in test mode)</li>
+          <li><strong>Aviationstack</strong> - Live flight status, date-filtered (schedule only, price: null)</li>
+          <li><strong>OpenSky Network</strong> - Free real recent/live flights by ICAO airport, anonymous or optional credentials (schedule only, price: null)</li>
+          <li><strong>OpenFlights</strong> - Free route database from GitHub, confirms which airlines fly which routes, typical stops (schedule only, price: null)</li>
+        </ol>
+
+        <h3 style={{ fontSize: "18px", fontWeight: "600", marginTop: "24px", marginBottom: "12px", color: "#0c4a6e" }}>Honesty Rules</h3>
+        <ul style={{ fontSize: "15px", lineHeight: "1.8", color: "#0c4a6e", paddingLeft: "24px" }}>
+          <li>✅ <strong>Agent explains when fares are unavailable</strong> and offers to retry with priced providers</li>
+          <li>✅ <strong>Booking requires a priced offer</strong> - agent rejects schedule-only flights for PayPal checkout</li>
+          <li>✅ <strong>Schedule-only offers labeled clearly</strong> with &quot;schedule only - fare unavailable&quot; message</li>
+          <li>✅ <strong>No fabricated prices</strong> - if price is null, it stays null and is explained to the user</li>
+          <li>❌ <strong>Agent will NOT</strong> attempt to book or charge PayPal for schedule-only flights</li>
+          <li>❌ <strong>Agent will NOT</strong> invent or guess prices</li>
+        </ul>
+
+        <h3 style={{ fontSize: "18px", fontWeight: "600", marginTop: "24px", marginBottom: "12px", color: "#0c4a6e" }}>Sky-Scrapper 429 Resilience</h3>
+        <ul style={{ fontSize: "15px", lineHeight: "1.8", color: "#0c4a6e", paddingLeft: "24px" }}>
+          <li>Exponential backoff: 2s, 4s, 8s, 16s, 32s, 64s (up to 6 retries)</li>
+          <li>Honors <code>Retry-After</code> header when rate limited</li>
+          <li>In-memory cache (10 min TTL) for airport lookups and search results</li>
+          <li>Clear error messages when quota exhausted (no misleading &quot;complete&quot; status)</li>
+        </ul>
       </section>
 
       <section style={{ marginBottom: "48px", padding: "24px", background: "#fef2f2", borderRadius: "8px", border: "1px solid #fecaca" }}>

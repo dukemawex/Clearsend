@@ -60,6 +60,10 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { escrowId } = DeleteEscrowSchema.parse(body);
     
+    if (!escrowId.startsWith("escrow_")) {
+      return NextResponse.json({ error: "Invalid escrow ID format", success: false }, { status: 400 });
+    }
+    
     await getStorage().delete(`escrow:${escrowId}`);
     console.info("escrow_deleted", { id: escrowId });
     

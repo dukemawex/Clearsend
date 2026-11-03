@@ -1,6 +1,6 @@
 export type FlightOffer = {
   id: string;
-  provider: "duffel" | "rapidapi" | "aviationstack";
+  provider: "duffel" | "rapidapi" | "aviationstack" | "openflights" | "opensky";
   airline: string;
   airlineCode?: string;
   route: string;
@@ -13,11 +13,29 @@ export type FlightOffer = {
   price: number | null;
   currency: string;
   isCheapest?: boolean;
+  scheduleOnly?: boolean;
 };
 
 type SearchInput = { origin: string; destination: string; date?: string };
 type JsonRecord = Record<string, unknown>;
 type ProviderResult = { name: string; status: "success" | "error" | "empty"; message?: string };
+
+// Simple in-memory cache with expiration
+const cache = new Map<string, { data: unknown; expires: number }>();
+
+function getCached<T>(key: string): T | null {
+  const entry = cache.get(key);
+  if (!entry) return null;
+  if (Date.now() > entry.expires) {
+    cache.delete(key);
+    return null;
+  }
+  return entry.data as T;
+}
+
+function setCache(key: string, data: unknown, ttlMs: number): void {
+  cache.set(key, { data, expires: Date.now() + ttlMs });
+}
 
 const CITY_TO_IATA: Record<string, string> = {
   "new york": "JFK",
@@ -79,6 +97,216 @@ function normalizeAirportCode(input: string): string {
   const normalized = input.trim().toLowerCase();
   if (/^[a-z]{3}$/i.test(input.trim())) return input.trim().toUpperCase();
   return CITY_TO_IATA[normalized] || input.trim().toUpperCase();
+}
+
+// IATA to ICAO mapping for OpenSky Network
+const IATA_TO_ICAO: Record<string, string> = {
+  "JFK": "KJFK", "LOS": "DNMM", "ABV": "DNAA", "LHR": "EGLL", "ACC": "DGAA",
+  "NBO": "HKJK", "JNB": "FAOR", "CAI": "HECA", "DXB": "OMDB", "CDG": "LFPG",
+  "AMS": "EHAM", "FRA": "EDDF", "BER": "EDDB", "FCO": "LIRF", "MXP": "LIMC",
+  "BCN": "LEBL", "NRT": "RJAA", "SIN": "WSSS", "HKG": "VHHH", "LAX": "KLAX",
+  "ORD": "KORD", "MIA": "KMIA", "YYZ": "CYYZ", "ATL": "KATL", "BOM": "VABB",
+  "DEL": "VIDP", "SYD": "YSSY", "MEL": "YMML"
+};
+
+function iataToIcao(iata: string): string | null {
+  return IATA_TO_ICAO[iata.toUpperCase()] || null;
+}
+
+// OpenFlights data structures
+type OpenFlightsAirline = { iata: string; icao: string; name: string; active: boolean };
+type OpenFlightsRoute = { airline: string; airlineId: string; source: string; dest: string; stops: string };
+
+async function fetchOpenFlightsData<T>(
+  filename: string,
+  parser: (line: string) => T | null
+): Promise<T[]> {
+  const cacheKey = `openflights:${filename}`;
+  const cached = getCached<T[]>(cacheKey);
+  if (cached) return cached;
+
+  try {
+    const url = `https://raw.githubusercontent.com/jpatokal/openflights/master/data/${filename}`;
+    const response = await fetch(url, { cache: "force-cache" });
+    if (!response.ok) throw new Error(`OpenFlights fetch failed: ${response.status}`);
+    
+    const text = await response.text();
+    const lines = text.split("\n").filter(line => line.trim().length > 0);
+    const parsed = lines.map(parser).filter((item): item is T => item !== null);
+    
+    setCache(cacheKey, parsed, 3600000); // 1 hour cache
+    return parsed;
+  } catch (error) {
+    console.warn("openflights_fetch_error", { filename, error: error instanceof Error ? error.message : String(error) });
+    return [];
+  }
+}
+
+async function getOpenFlightsAirlines(): Promise<OpenFlightsAirline[]> {
+  return fetchOpenFlightsData("airlines.dat", (line) => {
+    const parts = line.split(",").map(p => p.replace(/^"|"$/g, ""));
+    if (parts.length < 8) return null;
+    const iata = parts[3];
+    const icao = parts[4];
+    const active = parts[7] === "Y";
+    if ((!iata || iata === "\\N" || iata === "-") && (!icao || icao === "\\N" || icao === "-")) return null;
+    return { iata: iata !== "\\N" && iata !== "-" ? iata : "", icao: icao !== "\\N" && icao !== "-" ? icao : "", name: parts[1], active };
+  });
+}
+
+async function getOpenFlightsRoutes(): Promise<OpenFlightsRoute[]> {
+  return fetchOpenFlightsData("routes.dat", (line) => {
+    const parts = line.split(",").map(p => p.replace(/^"|"$/g, ""));
+    if (parts.length < 8) return null;
+    const airline = parts[0];
+    const airlineId = parts[1];
+    const source = parts[2];
+    const dest = parts[4];
+    const stops = parts[7];
+    if (!airline || !source || !dest || source === "\\N" || dest === "\\N") return null;
+    return { airline, airlineId, source, dest, stops };
+  });
+}
+
+async function searchOpenFlights(input: SearchInput): Promise<{ offers: FlightOffer[]; status: string; message?: string }> {
+  try {
+    const originCode = normalizeAirportCode(input.origin);
+    const destCode = normalizeAirportCode(input.destination);
+    
+    const [routes, airlines] = await Promise.all([getOpenFlightsRoutes(), getOpenFlightsAirlines()]);
+    
+    const matchingRoutes = routes.filter(r => r.source === originCode && r.dest === destCode);
+    
+    if (matchingRoutes.length === 0) {
+      return { offers: [], status: "empty", message: "No routes found in OpenFlights database" };
+    }
+    
+    const airlineMap = new Map<string, OpenFlightsAirline>();
+    airlines.forEach(a => {
+      if (a.iata) airlineMap.set(a.iata, a);
+      if (a.icao) airlineMap.set(a.icao, a);
+    });
+    
+    const offers: FlightOffer[] = matchingRoutes
+      .slice(0, 10)
+      .map((route, index) => {
+        const airline = airlineMap.get(route.airline);
+        const airlineName = airline?.name || `Airline ${route.airline}`;
+        const stops = route.stops === "\\N" ? 0 : parseInt(route.stops, 10);
+        
+        return {
+          id: `openflights-${index}`,
+          provider: "openflights" as const,
+          airline: airlineName,
+          airlineCode: route.airline,
+          route: `${originCode} → ${destCode}`,
+          origin: input.origin,
+          destination: input.destination,
+          depart: "Schedule only",
+          arrive: "Schedule only",
+          stops: isNaN(stops) ? 0 : stops,
+          price: null,
+          currency: "USD",
+          scheduleOnly: true
+        };
+      });
+    
+    return { 
+      offers, 
+      status: "success", 
+      message: "OpenFlights schedule data - fare unavailable" 
+    };
+  } catch (error) {
+    return { offers: [], status: "error", message: `OpenFlights error: ${error instanceof Error ? error.message : String(error)}` };
+  }
+}
+
+async function searchOpenSky(input: SearchInput, date: string): Promise<{ offers: FlightOffer[]; status: string; message?: string }> {
+  try {
+    const originCode = normalizeAirportCode(input.origin);
+    const destCode = normalizeAirportCode(input.destination);
+    const originIcao = iataToIcao(originCode);
+    const destIcao = iataToIcao(destCode);
+    
+    if (!originIcao || !destIcao) {
+      return { offers: [], status: "empty", message: `Could not map IATA codes to ICAO for OpenSky Network` };
+    }
+    
+    const requestDate = new Date(date);
+    const begin = Math.floor(requestDate.getTime() / 1000);
+    const end = begin + 86400; // 24 hours
+    
+    const username = process.env.OPENSKY_USERNAME || "";
+    const password = process.env.OPENSKY_PASSWORD || "";
+    const auth = username && password ? `${username}:${password}` : "";
+    
+    const headers: HeadersInit = auth ? { Authorization: `Basic ${Buffer.from(auth).toString("base64")}` } : {};
+    
+    const cacheKey = `opensky:${originIcao}:${begin}`;
+    const cached = getCached<FlightOffer[]>(cacheKey);
+    if (cached) {
+      return { offers: cached, status: "success", message: "OpenSky Network real flight data - fare unavailable" };
+    }
+    
+    const url = `https://opensky-network.org/api/flights/departure?airport=${originIcao}&begin=${begin}&end=${end}`;
+    const response = await fetch(url, { headers, cache: "no-store" });
+    
+    if (!response.ok) {
+      if (response.status === 429) {
+        return { offers: [], status: "error", message: "OpenSky Network rate limit exceeded" };
+      }
+      return { offers: [], status: "error", message: `OpenSky HTTP ${response.status}` };
+    }
+    
+    const flights = await response.json().catch(() => []);
+    if (!Array.isArray(flights)) {
+      return { offers: [], status: "empty", message: "No flights returned from OpenSky" };
+    }
+    
+    const matchingFlights = flights.filter((f: JsonRecord) => {
+      const estArrivalAirport = asString(f.estArrivalAirport);
+      return estArrivalAirport === destIcao;
+    });
+    
+    if (matchingFlights.length === 0) {
+      return { offers: [], status: "empty", message: "No matching flights found in OpenSky data" };
+    }
+    
+    const offers: FlightOffer[] = matchingFlights.slice(0, 10).map((f: JsonRecord, index: number) => {
+      const icao24 = asString(f.icao24);
+      const callsign = asString(f.callsign).trim();
+      const firstSeen = asNumber(f.firstSeen);
+      const lastSeen = asNumber(f.lastSeen);
+      const departTime = firstSeen > 0 ? new Date(firstSeen * 1000).toISOString() : "Scheduled";
+      const arriveTime = lastSeen > 0 ? new Date(lastSeen * 1000).toISOString() : "Scheduled";
+      
+      return {
+        id: `opensky-${icao24}-${index}`,
+        provider: "opensky" as const,
+        airline: callsign || "Unknown carrier",
+        airlineCode: callsign.substring(0, 3),
+        route: `${originCode} → ${destCode}`,
+        origin: input.origin,
+        destination: input.destination,
+        depart: departTime,
+        arrive: arriveTime,
+        stops: 0,
+        price: null,
+        currency: "USD",
+        scheduleOnly: true
+      };
+    });
+    
+    setCache(cacheKey, offers, 600000); // 10 min cache
+    
+    return { 
+      offers, 
+      status: "success", 
+      message: "OpenSky Network real flight data - fare unavailable" 
+    };
+  } catch (error) {
+    return { offers: [], status: "error", message: `OpenSky error: ${error instanceof Error ? error.message : String(error)}` };
+  }
 }
 
 function validateDate(date?: string): { valid: boolean; date: string | null; error?: string } {
@@ -181,6 +409,10 @@ async function searchDuffel(input: SearchInput, date: string): Promise<{ offers:
 }
 
 async function rapidAirport(query: string, headers: HeadersInit, originalIataCode?: string): Promise<{ skyId: string; entityId: string } | null> {
+  const cacheKey = `rapidapi:airport:${query}:${originalIataCode || ""}`;
+  const cached = getCached<{ skyId: string; entityId: string }>(cacheKey);
+  if (cached) return cached;
+
   try {
     const url = `https://sky-scrapper.p.rapidapi.com/api/v1/flights/searchAirport?query=${encodeURIComponent(query)}&locale=en-US`;
     const response = await fetch(url, { headers, cache: "no-store" });
@@ -246,7 +478,9 @@ async function rapidAirport(query: string, headers: HeadersInit, originalIataCod
     if (!skyId || !entityId) return null;
     
     console.info("rapidapi_airport_resolved", { query, skyId, entityId, flightPlaceType: asString(airport.flightPlaceType) });
-    return { skyId, entityId };
+    const result = { skyId, entityId };
+    setCache(cacheKey, result, 600000); // 10 min cache
+    return result;
   } catch (error) {
     throw error;
   }
@@ -323,6 +557,10 @@ async function searchRapidApi(input: SearchInput, date: string): Promise<{ offer
       sortBy: "best"
     });
     
+    const searchCacheKey = `rapidapi:search:${originCode}:${destCode}:${date}`;
+    const cachedSearch = getCached<{ offers: FlightOffer[]; status: string; message?: string }>(searchCacheKey);
+    if (cachedSearch) return cachedSearch;
+
     let body: JsonRecord | null = null;
     let statusValue: string | boolean = false;
     let sessionId: string | null = null;
@@ -402,11 +640,21 @@ async function searchRapidApi(input: SearchInput, date: string): Promise<{ offer
     
     // Poll searchIncomplete if status is incomplete and we have a sessionId
     while (statusString === "incomplete" && sessionId && retries < maxRetries) {
-      await new Promise(resolve => setTimeout(resolve, 2000 * (retries + 1)));
+      // Exponential backoff: 2s, 4s, 8s, 16s, 32s, 64s
+      const backoffMs = Math.min(2000 * Math.pow(2, retries), 64000);
+      await new Promise(resolve => setTimeout(resolve, backoffMs));
       retries++;
       
       const incompleteUrl = `https://sky-scrapper.p.rapidapi.com/api/v2/flights/searchIncomplete?sessionId=${encodeURIComponent(sessionId)}`;
       const incompleteResponse = await fetch(incompleteUrl, { headers, cache: "no-store" });
+      
+      if (incompleteResponse.status === 429) {
+        const retryAfter = incompleteResponse.headers.get("Retry-After");
+        const retryWaitMs = retryAfter ? parseInt(retryAfter, 10) * 1000 : backoffMs;
+        console.warn("rapidapi_incomplete_rate_limited", { retry: retries, retryAfterMs: retryWaitMs });
+        await new Promise(resolve => setTimeout(resolve, retryWaitMs));
+        continue;
+      }
       
       if (!incompleteResponse.ok) {
         console.warn("rapidapi_incomplete_poll_failed", { retry: retries, status: incompleteResponse.status });
@@ -483,14 +731,16 @@ async function searchRapidApi(input: SearchInput, date: string): Promise<{ offer
       };
     }
     
-    return { offers: mapped, status: "success" };
+    const result = { offers: mapped, status: "success" };
+    setCache(searchCacheKey, result, 600000); // 10 min cache
+    return result;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return { offers: [], status: "error", message: `RapidAPI error: ${message}` };
   }
 }
 
-async function searchAviationstack(input: SearchInput): Promise<{ offers: FlightOffer[]; status: string; message?: string }> {
+async function searchAviationstack(input: SearchInput, requestedDate?: string): Promise<{ offers: FlightOffer[]; status: string; message?: string }> {
   const key = process.env.AVIATIONSTACK_API_KEY;
   if (!key) return { offers: [], status: "disabled", message: "AVIATIONSTACK_API_KEY not configured" };
   
@@ -536,9 +786,18 @@ async function searchAviationstack(input: SearchInput): Promise<{ offers: Flight
         arrive: asString(arrival.scheduled, "Scheduled"),
         stops: 0,
         price: null,
-        currency: "USD"
+        currency: "USD",
+        scheduleOnly: true
       };
-    }).filter((offer) => offer.airline.length > 0);
+    }).filter((offer) => {
+      if (!offer.airline || offer.airline.length === 0) return false;
+      // Filter by date if requestedDate is provided
+      if (requestedDate) {
+        const departDate = offer.depart.slice(0, 10);
+        return departDate === requestedDate;
+      }
+      return true;
+    });
     
     const message = "Aviationstack: live flight status only, no pricing (use for schedule reference)";
     return { offers: mapped, status: mapped.length > 0 ? "success" : "empty", message };
@@ -638,7 +897,7 @@ export async function searchFlights(input: SearchInput) {
   }
   
   // Aviationstack fallback (schedule only, no pricing)
-  const aviastackResult = await searchAviationstack(normalizedInput);
+  const aviastackResult = await searchAviationstack(normalizedInput, date);
   providerResults.push({ name: "aviationstack", status: aviastackResult.status as "success" | "error" | "empty", message: aviastackResult.message });
   if (aviastackResult.offers.length > 0) {
     console.info("flight_provider_served", { provider: "aviationstack", count: aviastackResult.offers.length, origin: normalizedInput.origin, destination: normalizedInput.destination });
@@ -652,6 +911,42 @@ export async function searchFlights(input: SearchInput) {
       success: true,
       providers: providerResults,
       note: aviastackResult.message
+    };
+  }
+
+  // OpenSky Network fallback (real flight data, no pricing)
+  const openskyResult = await searchOpenSky(normalizedInput, date);
+  providerResults.push({ name: "opensky", status: openskyResult.status as "success" | "error" | "empty", message: openskyResult.message });
+  if (openskyResult.offers.length > 0) {
+    console.info("flight_provider_served", { provider: "opensky", count: openskyResult.offers.length, origin: normalizedInput.origin, destination: normalizedInput.destination });
+    return {
+      provider: "opensky",
+      origin: normalizedInput.origin,
+      destination: normalizedInput.destination,
+      date: input.date ?? null,
+      dateUsed: date,
+      options: openskyResult.offers,
+      success: true,
+      providers: providerResults,
+      note: openskyResult.message
+    };
+  }
+
+  // OpenFlights fallback (route database, no pricing)
+  const openflightsResult = await searchOpenFlights(normalizedInput);
+  providerResults.push({ name: "openflights", status: openflightsResult.status as "success" | "error" | "empty", message: openflightsResult.message });
+  if (openflightsResult.offers.length > 0) {
+    console.info("flight_provider_served", { provider: "openflights", count: openflightsResult.offers.length, origin: normalizedInput.origin, destination: normalizedInput.destination });
+    return {
+      provider: "openflights",
+      origin: normalizedInput.origin,
+      destination: normalizedInput.destination,
+      date: input.date ?? null,
+      dateUsed: date,
+      options: openflightsResult.offers,
+      success: true,
+      providers: providerResults,
+      note: openflightsResult.message
     };
   }
   
