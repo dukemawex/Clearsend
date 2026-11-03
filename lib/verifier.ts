@@ -1,3 +1,4 @@
+import { nvidiaModelId, openrouterModelId } from "@/lib/ai-models";
 import { createOpenAI } from "@ai-sdk/openai";
 import { generateObject } from "ai";
 import { z } from "zod";
@@ -21,14 +22,14 @@ export function getEvaluationModel() {
       apiKey: process.env.NVIDIA_API_KEY, 
       baseURL: process.env.NVIDIA_BASE_URL ?? "https://integrate.api.nvidia.com/v1" 
     });
-    return nvidia.chat(process.env.NVIDIA_MODEL ?? "meta/llama-3.1-405b-instruct");
+    return nvidia.chat(nvidiaModelId());
   }
   if (process.env.OPENROUTER_API_KEY) {
     const openrouter = createOpenAI({ 
       apiKey: process.env.OPENROUTER_API_KEY, 
       baseURL: process.env.OPENROUTER_BASE_URL ?? "https://openrouter.ai/api/v1" 
     });
-    return openrouter.chat(process.env.OPENROUTER_MODEL ?? "meta-llama/llama-3.1-8b-instruct:free");
+    return openrouter.chat(openrouterModelId());
   }
   throw new Error("No AI provider configured for evaluation");
 }

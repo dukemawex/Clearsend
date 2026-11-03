@@ -1,3 +1,4 @@
+import { nvidiaModelId, openrouterModelId } from "@/lib/ai-models";
 import { createOpenAI } from "@ai-sdk/openai";
 import { PayPalAgentToolkit } from "@paypal/agent-toolkit/ai-sdk";
 import { generateText, streamText, tool } from "ai";
@@ -77,13 +78,13 @@ export function getAvailableProviders() {
   if (process.env.NVIDIA_API_KEY) {
     providers.push({
       name: "NVIDIA",
-      model: nvidia.chat(process.env.NVIDIA_MODEL ?? "meta/llama-3.3-70b-instruct"),
+      model: nvidia.chat(nvidiaModelId()),
     });
   }
   if (process.env.OPENROUTER_API_KEY) {
     providers.push({
       name: "OpenRouter",
-      model: openrouter.chat(process.env.OPENROUTER_MODEL ?? "meta-llama/llama-3.1-8b-instruct"),
+      model: openrouter.chat(openrouterModelId()),
     });
   }
   return providers;

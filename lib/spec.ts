@@ -1,6 +1,7 @@
 // AI spec extraction: turns an uploaded spec document into a structured, reviewable spec.
 // The document is untrusted data; the model is told never to follow instructions inside it,
 // never to invent criteria, and to list ambiguities instead.
+import { nvidiaModelId, openrouterModelIds } from "./ai-models";
 import { createOpenAI } from "@ai-sdk/openai";
 import { generateText } from "ai";
 import { z } from "zod";
@@ -67,12 +68,11 @@ function candidates() {
   const out: Array<{ name: string; model: ReturnType<ReturnType<typeof createOpenAI>["chat"]> }> = [];
   if (process.env.OPENROUTER_API_KEY) {
     const or = createOpenAI({ apiKey: process.env.OPENROUTER_API_KEY, baseURL: process.env.OPENROUTER_BASE_URL ?? "https://openrouter.ai/api/v1", headers: { "X-Title": "ClearSend" } });
-    const ids = [process.env.OPENROUTER_MODEL ?? "nvidia/nemotron-3-ultra-550b-a55b:free", ...(process.env.OPENROUTER_FALLBACK_MODELS ?? "google/gemma-4-31b-it:free,nvidia/nemotron-3.5-lightning:free").split(",")].map((x) => x.trim()).filter(Boolean);
-    for (const id of [...new Set(ids)]) out.push({ name: `openrouter:${id}`, model: or.chat(id) });
+    for (const id of openrouterModelIds()) out.push({ name: `openrouter:${id}`, model: or.chat(id) });
   }
   if (process.env.NVIDIA_API_KEY) {
     const nv = createOpenAI({ apiKey: process.env.NVIDIA_API_KEY, baseURL: process.env.NVIDIA_BASE_URL ?? "https://integrate.api.nvidia.com/v1" });
-    out.push({ name: "nvidia", model: nv.chat(process.env.NVIDIA_MODEL ?? "meta/llama-3.3-70b-instruct") });
+    out.push({ name: "nvidia", model: nv.chat(nvidiaModelId()) });
   }
   return out;
 }

@@ -11,6 +11,42 @@ ClearSend is an AI agent for worldwide journeys: send money across borders with 
 
 ---
 
+## How ClearSend uses PayPal and AI
+
+ClearSend is a cross-border escrow, remittance and flight-booking agent. Money moves only through PayPal (sandbox by default), and every money-moving step needs an explicit human confirmation. AI quotes, plans, reads specification documents and checks deliverables, but it never releases or refunds money on its own.
+
+**Fee model:** the payer is charged exactly the escrow amount (e.g. USD 5.00). ClearSend's 2.5% fee is withheld from the payout, so the recipient is paid the amount minus the fee (USD 4.87). Same-currency payouts have no FX spread; cross-currency quotes add a 1.2% spread to the live mid-market rate. A refund returns the full captured amount.
+
+### PayPal
+
+| PayPal tool | What ClearSend does with it | Code |
+| --- | --- | --- |
+| **Orders v2** (`/v2/checkout/orders`, create / get / capture) | Payer funds an escrow or pays for a flight. Each order carries `custom_id` `escrow:<id>` / `trip:<id>`; ClearSend checks id, amount and currency before capturing once. | `lib/paypal.ts`, `app/api/escrow/fund` |
+| **Payouts** (`/v1/payments/payouts`, batch + item GET) | Releases escrow to the recipient's PayPal account (email, phone or PayPal ID), reads payout status and error codes, and supports one safe retry per failed batch. | `lib/paypal.ts`, `lib/payout-*.ts`, `app/api/escrow/release`, `retry-payout` |
+| **Payments v2 refunds** (`/v2/payments/captures/{id}/refund`) | Refunds a funded escrow to the payer (`amount {value, currency_code}`, idempotent `PayPal-Request-Id`); trips auto-refund if ticketing fails. | `lib/paypal.ts`, `app/api/escrow/refund` |
+| **Webhooks** with signature verification (`/v1/notifications/verify-webhook-signature`) | `POST /api/webhooks/paypal` verifies every delivery against `PAYPAL_WEBHOOK_ID` (fail closed), de-duplicates events, and reconciles funding, refunds and payout outcomes. | `lib/paypal.ts`, `lib/paypal-webhook.ts` |
+| **PayPal Agent Toolkit** (`@paypal/agent-toolkit/ai-sdk`) | Exposes PayPal tools (orders, invoices, products, subscriptions, disputes, payments, payouts) to the chat agent in sandbox mode, only when the user's message is about payments and behind tool approval. | `lib/agent.ts` |
+
+### AI
+
+| Use | What it does | Provider order and default models | Code |
+| --- | --- | --- | --- |
+| **Agent chat** (`/agent`, AI SDK `generateText` with tools) | Remittance quotes, flight search and booking, escrow creation; money tools need approval. | NVIDIA NIM `meta/llama-3.3-70b-instruct` (`NVIDIA_MODEL`) first, then OpenRouter `nvidia/nemotron-3-ultra-550b-a55b:free` (`OPENROUTER_MODEL`). | `lib/agent.ts` |
+| **Deliverable verifier** (AI SDK `generateObject`) | Checks the recipient's deliverable against the escrow spec and acceptance criteria; documents are fenced as untrusted, injection is flagged. Release still needs a typed human confirmation. | NVIDIA `meta/llama-3.3-70b-instruct` if `NVIDIA_API_KEY` is set, otherwise OpenRouter `nvidia/nemotron-3-ultra-550b-a55b:free`. | `lib/verifier.ts` |
+| **Spec extraction** (`POST /api/spec/extract`) | Turns an uploaded document into an editable structured spec (deliverables, criteria, deadline, amount); never invents criteria. | OpenRouter `nvidia/nemotron-3-ultra-550b-a55b:free`, then `OPENROUTER_FALLBACK_MODELS` (default `google/gemma-4-31b-it:free,nvidia/nemotron-3.5-lightning:free`), then NVIDIA `meta/llama-3.3-70b-instruct`. | `lib/spec.ts` |
+
+All defaults live in `lib/ai-models.ts`. They are free models (NVIDIA NIM free tier, OpenRouter `:free`). Voice input and output use the browser's Web Speech API, so no AI key is needed for voice.
+
+### Other technologies
+
+Next.js 15 (App Router) and React, Vercel AI SDK (`ai`, `@ai-sdk/openai`), Upstash Redis REST (escrows, receipts, locks, webhook de-duplication), Vercel hosting, the Telegram Bot API (`@Moiffe_bot`), Duffel (test mode) and RapidAPI Sky-Scrapper for flight offers (Aviationstack / OpenFlights / OpenSky for schedules only), open FX rate providers, zod, `unpdf`, `mammoth` and `tesseract.js` for document text, and an MCP-over-HTTP endpoint at `/api/mcp`.
+
+### Sponsor integrations
+
+None. ClearSend does not use any of the optional sponsor tools (APIMatic, Postman, Astro, Render).
+
+---
+
 ## Quick start for reviewers
 
 ### Golden prompts (working with UI chips)
@@ -33,22 +69,22 @@ Try these in the live demo or after local setup:
 | `PAYPAL_CLIENT_ID` | PayPal sandbox app client ID | [developer.paypal.com/dashboard](https://developer.paypal.com/dashboard/) → Apps & Credentials → Sandbox → Create App |
 | `PAYPAL_CLIENT_SECRET` | PayPal sandbox app secret | Same dashboard |
 | `CLEAR_SEND_API_KEY` | Server-side auth for `/api/payouts` and `/api/orders` routes | Generate any strong random string (e.g. `openssl rand -hex 32`). **Do not commit this.** Only used when calling money routes directly (agent tools handle auth internally). |
-| `NVIDIA_API_KEY` **or** `OPENROUTER_API_KEY` | AI provider for the agent | NVIDIA: [build.nvidia.com](https://build.nvidia.com/) (free tier). OpenRouter: [openrouter.ai](https://openrouter.ai/). Agent tries NVIDIA first, falls back to OpenRouter if NVIDIA fails. **At least one is required.** |
+| `NVIDIA_API_KEY` **or** `OPENROUTER_API_KEY` | AI provider for the agent, verifier and spec extraction | NVIDIA: [build.nvidia.com](https://build.nvidia.com/) (free tier). OpenRouter: [openrouter.ai](https://openrouter.ai/) (free `:free` models). **At least one is required.** |
+| `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN` | Escrow, receipt and webhook storage | [console.upstash.com](https://console.upstash.com/) → Redis → REST API |
+| `ESCROW_LINK_SECRET` | Signs payer / recipient / verifier links | `openssl rand -hex 32` |
+| `PAYPAL_WEBHOOK_ID` | Verifies PayPal webhook signatures | See [PayPal webhooks](#paypal-webhooks) |
 
-**Current working models (verified Nov 2026):**
-- **NVIDIA:** `meta/llama-3.3-70b-instruct` (default, free tier)
-- **OpenRouter:** `meta-llama/llama-3.1-8b-instruct` (default, requires credits)
+**Default models (all free, set in `lib/ai-models.ts`):**
+- **NVIDIA NIM:** `meta/llama-3.3-70b-instruct` (`NVIDIA_MODEL`)
+- **OpenRouter:** `nvidia/nemotron-3-ultra-550b-a55b:free` (`OPENROUTER_MODEL`), with `google/gemma-4-31b-it:free` and `nvidia/nemotron-3.5-lightning:free` as spec-extraction fallbacks (`OPENROUTER_FALLBACK_MODELS`)
 
-**Note:** Some models were deprecated/EOL:
-- ❌ `meta/llama-3.1-405b-instruct` (404 - doesn't exist)
-- ❌ `meta/llama-3.1-8b-instruct` on NVIDIA (410 Gone - EOL Aug 2026)
-- ❌ `meta-llama/llama-3.1-8b-instruct:free` on OpenRouter (unavailable)
+Do not use `meta/llama-3.1-405b-instruct`, `meta/llama-3.1-8b-instruct` (NVIDIA) or `meta-llama/llama-3.1-8b-instruct:free` (OpenRouter); they are unavailable.
 
 **Optional:** `DUFFEL_API_KEY`, `RAPIDAPI_KEY`, `AVIATIONSTACK_API_KEY` for flight search. Agent gracefully degrades if flight providers are unavailable.
 
 ### Sandbox receiver email for payout demos
 
-Use a **sandbox Personal account email** from [developer.paypal.com/dashboard → Sandbox → Accounts](https://developer.paypal.com/dashboard/accounts). Fake emails like `test@example.com` will return `DENIED` / `FAILED` status.
+Use a **US sandbox Personal account email** (PayPal's Payouts country list excludes some countries, and a payout to an account in such a country fails with `RECEIVER_COUNTRY_NOT_ALLOWED`) from [developer.paypal.com/dashboard → Sandbox → Accounts](https://developer.paypal.com/dashboard/accounts). Fake emails like `test@example.com` will return `DENIED` / `FAILED` status.
 
 Example: `sb-yoursandbox47@personal.example.com` (replace with your actual sandbox account).
 
@@ -196,7 +232,7 @@ cp .env.example .env.local
 npm run dev
 ```
 
-Open http://localhost:3000. Flight search uses the configured worldwide provider chain. PayPal actions require sandbox credentials and an NVIDIA key for the agent.
+Open http://localhost:3000. Flight search uses the configured worldwide provider chain. PayPal actions require sandbox credentials; the agent needs `NVIDIA_API_KEY` or `OPENROUTER_API_KEY`.
 
 ## Environment variables
 
@@ -207,10 +243,16 @@ Open http://localhost:3000. Flight search uses the configured worldwide provider
 | `CLEAR_SEND_API_KEY` | Server-side auth token for `/api/payouts` and `/api/orders` direct calls. Generate a strong random string. Not needed for agent tool execution (agent handles auth internally). If not set, money routes log a warning but remain unprotected. | **Recommended** |
 | `NVIDIA_API_KEY` | NVIDIA NIM API key | **Yes** (or use OpenRouter) |
 | `NVIDIA_BASE_URL` | Optional base URL; defaults to `https://integrate.api.nvidia.com/v1` | No |
-| `NVIDIA_MODEL` | Optional model; defaults to `meta/llama-3.3-70b-instruct` (Nov 2026 - current, free tier). **DO NOT use deprecated models:** `meta/llama-3.1-405b-instruct` (404), `meta/llama-3.1-8b-instruct` (410 EOL Aug 2026) | No |
-| `OPENROUTER_API_KEY` | Optional fallback key from [openrouter.ai](https://openrouter.ai/). Agent tries NVIDIA first, then falls back to OpenRouter if NVIDIA fails. | **Yes** (if no NVIDIA) |
+| `NVIDIA_MODEL` | Optional; defaults to `meta/llama-3.3-70b-instruct` (free tier). Used by the agent, verifier and spec extraction. | No |
+| `OPENROUTER_API_KEY` | Key from [openrouter.ai](https://openrouter.ai/). Agent and verifier use NVIDIA first when set; spec extraction tries OpenRouter first. | **Yes** (if no NVIDIA) |
 | `OPENROUTER_BASE_URL` | Optional base URL; defaults to `https://openrouter.ai/api/v1` | No |
-| `OPENROUTER_MODEL` | Optional fallback model; defaults to `meta-llama/llama-3.1-8b-instruct` (requires credits). **DO NOT use:** `meta-llama/llama-3.1-8b-instruct:free` (unavailable Nov 2026) | No |
+| `OPENROUTER_MODEL` | Optional; defaults to `nvidia/nemotron-3-ultra-550b-a55b:free` (free). | No |
+| `OPENROUTER_FALLBACK_MODELS` | Optional comma-separated spec-extraction fallbacks; defaults to `google/gemma-4-31b-it:free,nvidia/nemotron-3.5-lightning:free` | No |
+| `PAYPAL_ENV` | Unset or `sandbox` = PayPal sandbox (default). Only `live` switches to live PayPal. | No |
+| `PAYPAL_WEBHOOK_ID` | Webhook ID of your sandbox app's webhook; required for `/api/webhooks/paypal` (fails closed without it) | **Yes** (for webhooks) |
+| `PAYPAL_EXPERIENCE` | Set to `legacy` to use `application_context` instead of `payment_source.paypal.experience_context` | No |
+| `SANDBOX_BUYER_EMAIL`, `SANDBOX_BUYER_PASSWORD` | Optional throwaway US sandbox Personal buyer shown on the funding panel (sandbox only) | No |
+| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`, `NEXT_PUBLIC_TELEGRAM_BOT_USERNAME` | Telegram bot (see [Use ClearSend in Telegram](#use-clearsend-in-telegram)) | No |
 | `DUFFEL_API_KEY` | Duffel test-mode token; primary flight provider | No |
 | `RAPIDAPI_KEY` | RapidAPI key for Sky Scrapper backup flight search | No |
 | `AVIATIONSTACK_API_KEY` | Aviationstack free-tier key for route/schedule backup | No |
@@ -291,19 +333,20 @@ Escrow records are persisted server-side in Upstash Redis (via env `UPSTASH_REDI
 2. Open **Apps & Credentials**, switch to **Sandbox**, and create an app.
 3. Copy the app's Client ID and Secret into `PAYPAL_CLIENT_ID` and `PAYPAL_CLIENT_SECRET`.
 4. Create a sandbox **Personal account** under **Sandbox → Accounts** for the recipient email used during payout approval. Use the email from this account in your demo (e.g. `sb-yoursandbox47@personal.example.com`). **Fake emails will fail.**
-5. Every PayPal request is hard-coded to `api-m.sandbox.paypal.com`.
+5. Every PayPal request goes to `api-m.sandbox.paypal.com` unless `PAYPAL_ENV=live` is set explicitly.
+6. Create a **US sandbox Personal account** as the test buyer (it pays with PayPal balance) and, for payout demos, as the recipient.
 
 ### NVIDIA NIM (recommended AI provider)
 
 1. Create a free account at [build.nvidia.com](https://build.nvidia.com/).
 2. Create an API key from the account menu.
-3. Set it as `NVIDIA_API_KEY`. The agent uses model `meta/llama-3.1-405b-instruct` by default (free tier).
+3. Set it as `NVIDIA_API_KEY`. The agent, verifier and spec extraction use `meta/llama-3.3-70b-instruct` by default (free tier).
 
 ### OpenRouter fallback (alternative AI provider)
 
 1. Create an account at [openrouter.ai](https://openrouter.ai/).
 2. Create an API key and set it as `OPENROUTER_API_KEY`.
-3. The agent uses `meta-llama/llama-3.1-8b-instruct:free` by default. ClearSend uses NVIDIA when `NVIDIA_API_KEY` is set and automatically selects OpenRouter when it is unavailable.
+3. The default is the free `nvidia/nemotron-3-ultra-550b-a55b:free`. The agent and verifier use NVIDIA when `NVIDIA_API_KEY` is set and OpenRouter otherwise (the agent also falls back to OpenRouter if NVIDIA fails); spec extraction tries the OpenRouter free models first, then NVIDIA.
 
 ## Worldwide flight providers
 
@@ -393,7 +436,7 @@ ClearSend demonstrates **PayPal + AI** by building an autonomous agent that hand
 
 ### 🎯 Core Concept
 
-Every PayPal action flows through the **@paypal/agent-toolkit**, is tracked in real-time via the **PayPal Activity Panel**, and requires explicit user consent before execution. No mock data—all transactions hit real PayPal sandbox endpoints.
+Agent-initiated PayPal actions use the **@paypal/agent-toolkit** or ClearSend's own approval-gated tools; escrow funding, release and refund call PayPal's REST APIs directly from `lib/paypal.ts`. Every PayPal action is recorded in the activity feed (agent tool calls also in the **PayPal Activity Panel**) and requires explicit user consent before execution. No mock data—all transactions hit real PayPal sandbox endpoints.
 
 ### 🏗️ Architecture
 
@@ -432,7 +475,6 @@ Every PayPal action flows through the **@paypal/agent-toolkit**, is tracked in r
 - `POST /v2/checkout/orders` (create)
 - `POST /v2/checkout/orders/:id/capture`
 - `GET /v2/checkout/orders/:id`
-- `POST /v2/checkout/orders/:id/authorize`
 - Toolkit: `paypal_create_order`, `paypal_get_order`, `paypal_capture_order`
 
 **Payouts API:**
