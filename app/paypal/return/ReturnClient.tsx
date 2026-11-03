@@ -31,10 +31,10 @@ export default function ReturnClient() {
     try {
       const res = kind === "escrow"
         ? await fetch("/api/escrow/fund", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ escrowId: id, orderId, ...payerCred(roleUrl) }) })
-        : await fetch(`/api/trips/${encodeURIComponent(id)}/book`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ orderId }) });
+        : await fetch(`/api/trips/${encodeURIComponent(id)}/book`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ orderId, confirmation: typed.trim() }) });
       const j = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(j.error ?? `HTTP ${res.status}`);
-      setDone(kind === "escrow" ? "Escrow funded. The recipient can now submit the deliverable." : `Payment captured. Trip state: ${j.state ?? "paid"}.`);
+      setDone(kind === "escrow" ? "Escrow funded. The recipient can now submit the deliverable." : `Payment captured. Test booking via Duffel sandbox confirmed${j.bookingReference ? `: booking reference ${j.bookingReference}` : ""}.`);
       toast({ tone: "ok", title: "PayPal sandbox capture complete" });
     } catch (e) { setErr((e as Error).message); toast({ tone: "bad", title: "Capture failed", body: (e as Error).message }); }
     finally { setBusy(false); }

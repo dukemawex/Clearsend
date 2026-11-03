@@ -6,7 +6,7 @@ import { recordActivity } from "@/lib/activity";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-const Input = z.object({ origin: z.string().trim().min(2).max(40), destination: z.string().trim().min(2).max(40), date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional() });
+const Input = z.object({ origin: z.string().trim().min(2).max(40), destination: z.string().trim().min(2).max(40), date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(), passengers: z.number().int().min(1).max(9).optional() });
 
 // Public web search used by /plan. Same backend the agent uses; never invents prices.
 export async function POST(req: Request) {

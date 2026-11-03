@@ -31,7 +31,7 @@ export default function TripDetailPage() {
       setTrip(data);
       
       // Determine booking step based on state
-      if (data.state === "confirmed" || data.state === "refunded") {
+      if (data.state === "confirmed" || data.state === "refunded" || data.state === "failed") {
         setBookingStep("complete");
       } else if (data.state === "payment_pending" || data.state === "payment_approved" || data.state === "ticketing") {
         setBookingStep("payment");
@@ -86,47 +86,7 @@ export default function TripDetailPage() {
     }
   };
 
-  const handleCompletePayment = async () => {
-    setIsProcessing(true);
-    try {
-      const urlParams = new URLSearchParams(window.location.search);
-      const token = urlParams.get("token");
-      
-      if (!token) {
-        throw new Error("No payment token found");
-      }
-
-      const res = await fetch(`/api/trips/${id}/book`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ orderId: token }),
-      });
-      
-      const data = await res.json();
-      
-      if (!data.success) {
-        throw new Error(data.error || "Payment failed");
-      }
-      
-      await loadTrip();
-      setBookingStep("complete");
-      
-      // Clear URL params
-      router.replace(`/trips/${id}`);
-    } catch (err) {
-      alert(err instanceof Error ? err.message : "Failed to complete payment");
-    } finally {
-      setIsProcessing(false);
-    }
-  };
-
-  // Check if we're returning from PayPal
-  useEffect(() => {
-    const urlParams = new URLSearchParams(window.location.search);
-    if (urlParams.get("token") && trip?.state === "payment_pending") {
-      handleCompletePayment();
-    }
-  }, [trip?.state]);
+  // Capture happens on /paypal/return, where the payer types CAPTURE.
 
   if (loading) {
     return (
@@ -216,12 +176,18 @@ export default function TripDetailPage() {
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  {trip.provider !== "duffel" && (
-                    <div className="bg-amber-50 border border-amber-200 p-4 rounded-md">
-                      <p className="text-sm text-amber-900">
-                        <strong>Test Mode Booking</strong><br />
-                        This booking was completed in test mode. No actual airline ticket has been issued.
+                  {trip.state === "confirmed" && (
+                    <div className="bg-blue-50 border border-blue-200 p-4 rounded-md">
+                      <p className="text-sm text-blue-900">
+                        <strong>Test booking via Duffel sandbox</strong><br />
+                        No real airline ticket has been issued. Duffel&apos;s sandbox only sells sample flights, so the booked test flight is {trip.duffelTestAirline ?? "Duffel Airways"}{trip.duffelTestAmount ? ` (${trip.duffelTestAmount})` : ""}. The price you paid is the {trip.priceLabel ?? "provider fare"}.
                       </p>
+                    </div>
+                  )}
+                  {trip.duffelOrderId && (
+                    <div>
+                      <p className="text-sm text-gray-600">Duffel test order</p>
+                      <p className="text-sm font-mono">{trip.duffelOrderId}</p>
                     </div>
                   )}
                   
@@ -239,11 +205,11 @@ export default function TripDetailPage() {
                     </div>
                   )}
                   
-                  {trip.state === "refunded" && (
+                  {(trip.state === "refunded" || trip.state === "failed") && (
                     <div className="bg-red-50 border border-red-200 p-4 rounded-md">
                       <p className="text-sm text-red-900">
-                        <strong>Booking Refunded</strong><br />
-                        {trip.refundReason}
+                        <strong>{trip.state === "refunded" ? "Booking failed, payment refunded" : "Booking failed"}</strong><br />
+                        {trip.refundReason}{trip.refundId && <> · PayPal refund <code>{trip.refundId}</code></>}
                       </p>
                     </div>
                   )}
@@ -258,6 +224,20 @@ export default function TripDetailPage() {
 
           {/* Sidebar */}
           <div className="space-y-6">
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">How this trip was made</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2 text-sm">
+                <ol className="space-y-2">
+                  <li>1. <b>Search</b>: {trip.priceLabel ?? trip.provider}{trip.kernelEvidence && <> · <a className="text-blue-700 underline" href={trip.kernelEvidence.searchUrl} target="_blank" rel="noreferrer">Google Flights</a>{trip.kernelEvidence.replayUrl && <> · <a className="text-blue-700 underline" href={trip.kernelEvidence.replayUrl} target="_blank" rel="noreferrer">Kernel replay</a></>}</>}</li>
+                  <li>2. <b>Pick</b>: {trip.airline}, {trip.currency} {trip.basePrice.toFixed(2)}</li>
+                  <li>3. <b>Fund</b>: {trip.paypalCaptureId ? <>PayPal sandbox capture <code>{trip.paypalCaptureId}</code></> : trip.paypalOrderId ? <>PayPal order <code>{trip.paypalOrderId}</code> awaiting approval</> : "not yet paid"}</li>
+                  <li>4. <b>Booking ref</b>: {trip.duffelBookingReference ? <><code>{trip.duffelBookingReference}</code> (Test booking via Duffel sandbox)</> : trip.bookingError ?? "pending"}</li>
+                  <li>5. <b>Receipt</b>: {(trip.receipts ?? []).length ? (trip.receipts ?? []).map((r) => <a key={r.id} className="mr-2 text-blue-700 underline" href={`/receipt/${r.id}`}>{r.number}</a>) : "issued after payment"}</li>
+                </ol>
+              </CardContent>
+            </Card>
             <Card>
               <CardHeader>
                 <CardTitle className="text-base">Flight Details</CardTitle>
@@ -304,7 +284,7 @@ export default function TripDetailPage() {
               </CardHeader>
               <CardContent className="space-y-2 text-sm">
                 <div className="flex justify-between">
-                  <span className="text-gray-600">Base Fare</span>
+                  <span className="text-gray-600">{trip.priceLabel ?? "Base Fare"}</span>
                   <span>{trip.currency} {trip.basePrice.toFixed(2)}</span>
                 </div>
                 <div className="flex justify-between">

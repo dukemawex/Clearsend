@@ -51,7 +51,10 @@ export const TripRecord = z.object({
   currency: z.string(),
   
   // Provider
-  provider: z.enum(["duffel", "rapidapi", "aviationstack"]),
+  provider: z.enum(["kernel", "duffel", "rapidapi", "aviationstack"]),
+  /** Where the price came from, e.g. "Live market price (Google Flights)". */
+  priceLabel: z.string().optional(),
+  kernelEvidence: z.object({ sessionId: z.string().optional(), liveViewUrl: z.string().optional(), replayUrl: z.string().optional(), searchUrl: z.string(), fetchedAt: z.number(), parser: z.string() }).optional(),
   providerOfferId: z.string().optional(),
   
   // Passenger
@@ -66,6 +69,12 @@ export const TripRecord = z.object({
   duffelOrderId: z.string().optional(),
   duffelBookingReference: z.string().optional(),
   duffelPnr: z.string().optional(),
+  /** Duffel sandbox offer actually booked (test mode only offers sample "Duffel Airways" flights). */
+  duffelOfferId: z.string().optional(),
+  duffelTestAirline: z.string().optional(),
+  duffelTestAmount: z.string().optional(),
+  bookingMode: z.literal("duffel_test").optional(),
+  bookingError: z.string().optional(),
   
   // Refund
   refundId: z.string().optional(),
@@ -97,6 +106,8 @@ export class TripError extends Error {
 // Storage abstraction
 class MemoryStorage {
   private store = new Map<string, string>();
+  async setNX(key: string, value: string): Promise<boolean> { if (this.store.has(key)) return false; this.store.set(key, value); return true; }
+  async del(key: string): Promise<void> { this.store.delete(key); }
   
   async get(key: string): Promise<string | null> {
     return this.store.get(key) || null;
@@ -113,6 +124,15 @@ class MemoryStorage {
 }
 
 class UpstashStorage {
+  async setNX(key: string, value: string, ttlSec?: number): Promise<boolean> {
+    const r = await fetch(this.baseUrl, { method: "POST", headers: { Authorization: `Bearer ${this.token}` }, body: JSON.stringify(["SET", key, value, "NX", ...(ttlSec ? ["EX", String(ttlSec)] : [])]), cache: "no-store" });
+    if (!r.ok) throw new Error(`Upstash SET NX failed: ${r.status}`);
+    return ((await r.json()) as { result: unknown }).result === "OK";
+  }
+  async del(key: string): Promise<void> {
+    const r = await fetch(this.baseUrl, { method: "POST", headers: { Authorization: `Bearer ${this.token}` }, body: JSON.stringify(["DEL", key]), cache: "no-store" });
+    if (!r.ok) throw new Error(`Upstash DEL failed: ${r.status}`);
+  }
   private baseUrl: string;
   private token: string;
   
@@ -188,8 +208,10 @@ export async function createTrip(input: {
   arrivalTime: string;
   basePrice: number;
   currency: string;
-  provider: "duffel" | "rapidapi" | "aviationstack";
+  provider: "kernel" | "duffel" | "rapidapi" | "aviationstack";
   providerOfferId?: string;
+  priceLabel?: string;
+  kernelEvidence?: TripRecord["kernelEvidence"];
   ownerId?: string | null;
 }): Promise<TripRecord> {
   const ownerId = input.ownerId !== undefined ? input.ownerId : await currentOwner();
@@ -219,6 +241,8 @@ export async function createTrip(input: {
     currency: input.currency,
     provider: input.provider,
     providerOfferId: input.providerOfferId,
+    priceLabel: input.priceLabel,
+    kernelEvidence: input.kernelEvidence,
     createdAt: now,
     updatedAt: now,
     timeline: [{ state: "draft", timestamp: now }],
@@ -315,14 +339,43 @@ export async function markTicketing(id: string): Promise<TripRecord> {
   return updateTrip(id, {}, "ticketing");
 }
 
-export async function confirmTrip(id: string, duffelOrderId?: string, bookingRef?: string, pnr?: string): Promise<TripRecord> {
+export async function confirmTrip(id: string, duffelOrderId?: string, bookingRef?: string, pnr?: string, extra: Partial<Pick<TripRecord, "duffelOfferId" | "duffelTestAirline" | "duffelTestAmount" | "bookingMode">> = {}): Promise<TripRecord> {
+  const trip = await getTrip(id);
+  if (!trip) throw new TripError(`Trip ${id} not found`, "NOT_FOUND");
+  // Attach the sandbox booking to the funding receipt so the receipt shows what was booked.
+  const receipts = (trip.receipts ?? []).map((r) => r.kind === "funding" && duffelOrderId ? { ...r, booking: { provider: "duffel" as const, mode: "test" as const, orderId: duffelOrderId, bookingReference: bookingRef, label: "Test booking via Duffel sandbox" } } : r);
+  if (duffelOrderId) await recordActivity({ ownerId: trip.ownerId, kind: "trip", subject: id, actor: "Duffel sandbox", summary: `Test booking via Duffel sandbox: order ${duffelOrderId}${bookingRef ? `, booking reference ${bookingRef}` : ""}. No real ticket issued.` });
   return updateTrip(id, {
     duffelOrderId,
     duffelBookingReference: bookingRef,
     duffelPnr: pnr,
+    ...extra,
+    receipts,
     ticketedAt: Date.now()
   }, "confirmed");
 }
+
+/** Short per-trip mutex around capture + booking + refund. Throws TripError("BUSY"). */
+export async function withTripLock<T>(id: string, fn: () => Promise<T>, ttlSec = 90): Promise<T> {
+  const key = `lock:trip:${id}`;
+  if (!(await getStorage().setNX(key, String(Date.now()), ttlSec))) throw new TripError(`Another payment action is already running for trip ${id}. Try again in a minute.`, "BUSY");
+  try { return await fn(); } finally { await getStorage().del(key).catch(() => {}); }
+}
+/** Permanent one-way claim: a captured trip is booked OR refunded once, never both. */
+export async function claimTripSettlement(id: string, kind: "book" | "refund"): Promise<{ ok: true } | { ok: false; by: string }> {
+  const key = `settle:trip:${id}`;
+  if (await getStorage().setNX(key, kind)) return { ok: true };
+  return { ok: false, by: (await getStorage().get(key)) ?? "unknown" };
+}
+/** A PayPal order pays for exactly one trip. */
+export async function bindOrderToTrip(orderId: string, id: string): Promise<boolean> {
+  const key = `order:trip:${orderId}`;
+  if (await getStorage().setNX(key, id)) return true;
+  return (await getStorage().get(key)) === id;
+}
+export async function setTripFields(id: string, fields: Partial<TripRecord>): Promise<TripRecord> { return updateTrip(id, fields); }
+/** Tests only. */
+export function __resetTripStorageForTests() { storage = null; }
 
 export async function failTrip(id: string, reason: string): Promise<TripRecord> {
   return updateTrip(id, { refundReason: reason }, "failed");
