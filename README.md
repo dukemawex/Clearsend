@@ -568,3 +568,9 @@ The architecture, sandbox walkthrough and setup previously on an in-app `/judges
 6. **Agent-Readable:** MCP endpoint exposes ClearSend's PayPal tools to external agents
 7. **End-to-End Flows:** Remittance, travel, escrow—complete journeys, not isolated demos
 8. **No Mock Data:** Real flight APIs, real FX calculations, real PayPal responses with proper formatting
+
+## Failed payouts and retry
+
+If PayPal later fails, denies, returns, blocks, refunds or cancels a payout (webhook `PAYMENT.PAYOUTS-ITEM.*` / `PAYMENT.PAYOUTSBATCH.DENIED`, or the status poll on the escrow page and payout receipt), ClearSend records `payoutStatus: FAILED` with PayPal's error code in plain English, marks the payout receipt FAILED, logs an activity entry and posts to the escrow's Telegram chat. The escrow stays `released` (the release claim is permanent, so it can never also be refunded), but the page shows **Payout failed: reason** instead of claiming delivery.
+
+The payer can retry with a corrected recipient email/country: `POST /api/escrow/retry-payout` with `{ escrowId, role, token, confirmation: "RELEASE <amount> <CUR>", recipientEmail?, recipientCountry? }`. A retry runs only under the escrow lock, only after PayPal's API confirms the current batch failed, and only once per failed batch (permanent claim; freed only if PayPal rejects the new batch with a 4xx).

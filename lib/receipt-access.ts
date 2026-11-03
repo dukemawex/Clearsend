@@ -1,4 +1,5 @@
 import { getEscrow } from "./escrow";
+import { refreshPayout } from "./payout-sync";
 import { getTrip } from "./trips";
 import { verifyEscrowToken, type EscrowRole } from "./escrow-links";
 import { parseReceiptId, type Receipt } from "./receipts";
@@ -17,7 +18,8 @@ export async function loadReceipt(id: string, opts: { role?: string | null; toke
     const allowed = parsed.subjectType === "trip" ? ["payer"] : ROLES;
     if (!allowed.includes(opts.role as EscrowRole) || !verifyEscrowToken(parsed.subjectId, opts.role as EscrowRole, opts.token)) return { status: 403, error: "Invalid token for this role" };
   }
-  const rec = parsed.subjectType === "escrow" ? await getEscrow(parsed.subjectId) : await getTrip(parsed.subjectId);
+  const esc = parsed.subjectType === "escrow" ? await getEscrow(parsed.subjectId) : null;
+  const rec = esc ? (parsed.kind === "payout" ? await refreshPayout(esc) : esc) : parsed.subjectType === "escrow" ? null : await getTrip(parsed.subjectId);
   const receipt = rec?.receipts?.find((r) => r.id === id);
   if (!receipt) return { status: 404, error: "Receipt not found" };
   return { status: 200, receipt };

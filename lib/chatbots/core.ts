@@ -1,5 +1,6 @@
 import { escrowPayoutAmount } from "@/lib/receipts";
 // Platform-neutral escrow bot logic used by the Telegram bot.
+import { PAYOUT_RETRY_GUIDANCE } from "@/lib/payout-failure";
 // Reuses lib/escrow, lib/escrow-links, lib/fx, lib/paypal, lib/documents and the shared verifier.
 import { randomBytes } from "crypto";
 import { attachEscrowDocument, bindOrderToEscrow, claimSettlement, releaseSettlementClaim, withEscrowLock, payoutReceiver, createEscrow, fundEscrow, getEscrow, refundEscrow, releaseEscrow, submitDeliverable, verifyDeliverable, type EscrowRecord } from "@/lib/escrow";
@@ -257,7 +258,7 @@ const NEXT: Record<string, string> = {
   submitted: "Anyone in the escrow: run verify so the AI checks the work.",
   verified: "Payer: release the payout (button + typed confirmation).",
   rejected: "Recipient can't resubmit on this escrow; payer or verifier can refund.",
-  released: "Done. Funds were paid out via PayPal (sandbox).",
+  released: "Payout sent to PayPal (sandbox). Delivery is confirmed by PayPal's payout status below.",
   refunded: "Done. Funds were refunded to the payer.",
 };
 export async function status(ctx: Ctx, idArg?: string): Promise<Reply> {
@@ -275,7 +276,9 @@ export async function status(ctx: Ctx, idArg?: string): Promise<Reply> {
     `Parties: ${names.join(", ")}`,
     escrow.deliverable ? `Deliverable: ${escrow.deliverable.slice(0, 200)}${(escrow.documents ?? []).filter((d) => d.role === "deliverable").length ? ` (+${(escrow.documents ?? []).filter((d) => d.role === "deliverable").length} file)` : ""}` : "",
     ev ? `AI verifier: ${ev.met ? "MET" : "NOT MET"}: ${ev.reasons.slice(0, 400)}` : "",
-    `Next: ${NEXT[escrow.state]}`,
+    escrow.state === "released" && escrow.payoutStatus ? `Payout status: ${escrow.payoutStatus}` : "",
+    escrow.payoutFailure ? `❌ Payout failed: ${escrow.payoutFailure.reason}${escrow.payoutFailure.code ? ` (PayPal ${escrow.payoutFailure.code})` : ""}. ${PAYOUT_RETRY_GUIDANCE}` : "",
+    escrow.payoutFailure ? "" : `Next: ${NEXT[escrow.state]}`,
     role ? `Your role: ${role}` : "",
   ].filter(Boolean).join("\n") };
 }
@@ -470,7 +473,7 @@ async function executeLocked(ctx: Ctx, p: Pending): Promise<Reply> {
       if (!batchId) throw new Error("PayPal returned no payout batch id");
       const released = await releaseEscrow(escrow.id, batchId, payout.items?.[0]?.payout_item_id, payout.batch_header?.batch_status);
       await logActivity({ platform: ctx.platform, chatId: ctx.chatId, userId: ctx.userId, action: "release", escrowId: escrow.id, ok: true });
-      return withReceipt(released, "payout", `Released. ${money(escrowPayoutAmount(escrow.amount), escrow.currency)} (${money(escrow.amount, escrow.currency)} minus 2.5% ClearSend fee) sent to ${escrow.recipient} via PayPal Payouts (sandbox batch ${batchId}).`);
+      return withReceipt(released, "payout", `Released. Payout of ${money(escrowPayoutAmount(escrow.amount), escrow.currency)} (${money(escrow.amount, escrow.currency)} minus 2.5% ClearSend fee) to ${escrow.recipient} submitted to PayPal Payouts (sandbox batch ${batchId}, status ${payout.batch_header?.batch_status ?? "PENDING"}). I'll post here if PayPal reports it failed.`);
     }
     if (!escrow.captureId || !["funded", "submitted", "rejected"].includes(escrow.state)) return { text: `Escrow is ${escrow.state}; nothing to refund.` };
     const claim = await claimSettlement(escrow.id, "refund");
