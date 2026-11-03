@@ -109,9 +109,10 @@ Open http://localhost:3000. Flight search uses the configured worldwide provider
 | `KERNEL_API_KEY` | Optional Kernel browser key for the last-resort browser search | No |
 | `KERNEL_API_URL` | Optional Kernel browser endpoint; defaults to `https://api.onkernel.com/v1/browser/sessions` | No |
 | `ENABLE_KERNEL_FALLBACK` | Set to `true` to opt into browser fallback after all APIs fail | No |
-| `NEXT_PUBLIC_APP_URL` | Public app URL for return/cancel URLs | No |
+| `NEXT_PUBLIC_APP_URL` | **Public app URL** for escrow links and payment redirects. Use your production URL (e.g. `https://clearsend.vercel.app`) in production. Never use `localhost` in deployed environments. Falls back to `VERCEL_PROJECT_PRODUCTION_URL` if not set. | **Recommended** |
 | `UPSTASH_REDIS_REST_URL` | Upstash Redis REST URL for escrow storage | **Yes** (for escrow) |
 | `UPSTASH_REDIS_REST_TOKEN` | Upstash Redis REST token | **Yes** (for escrow) |
+| `ESCROW_LINK_SECRET` | Secret key for generating secure escrow role tokens. Generate with `openssl rand -hex 32`. Falls back to a default (insecure) value in development. | **Recommended** (production) |
 
 ## PayPal Escrow
 

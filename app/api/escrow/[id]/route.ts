@@ -5,12 +5,21 @@ import { verifyEscrowToken, type EscrowRole } from "@/lib/escrow-links";
 export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
-    const { searchParams } = new URL(request.url);
-    const role = searchParams.get("role") as EscrowRole | null;
-    const token = searchParams.get("token");
-
-    // If role and token provided, verify them
-    if (role && token) {
+    
+    // Check for service key
+    const serviceKey = request.headers.get("x-clearsend-api-key");
+    const hasValidServiceKey = serviceKey && serviceKey === process.env.CLEAR_SEND_API_KEY;
+    
+    if (!hasValidServiceKey) {
+      // Require role + token
+      const { searchParams } = new URL(request.url);
+      const role = searchParams.get("role") as EscrowRole | null;
+      const token = searchParams.get("token");
+      
+      if (!role || !token) {
+        return NextResponse.json({ error: "Missing role or token" }, { status: 401 });
+      }
+      
       if (!verifyEscrowToken(id, role, token)) {
         return NextResponse.json({ error: "Invalid token for this role" }, { status: 403 });
       }

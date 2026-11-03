@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createEscrow } from "@/lib/escrow";
+import { createEscrowLink } from "@/lib/escrow-links";
 import { z } from "zod";
 
 const CreateEscrowSchema = z.object({
@@ -15,12 +16,44 @@ const CreateEscrowSchema = z.object({
   acceptanceCriteria: z.array(z.string()).optional(),
 });
 
+function getPublicBaseUrl(request: NextRequest): string {
+  if (process.env.NEXT_PUBLIC_APP_URL && !process.env.NEXT_PUBLIC_APP_URL.includes("localhost")) {
+    return process.env.NEXT_PUBLIC_APP_URL;
+  }
+  
+  const origin = request.headers.get("origin") || request.headers.get("referer");
+  if (origin) {
+    try {
+      const url = new URL(origin);
+      if (!url.hostname.includes("localhost")) {
+        return `${url.protocol}//${url.host}`;
+      }
+    } catch {
+      // Invalid URL, continue to fallback
+    }
+  }
+  
+  if (process.env.VERCEL_PROJECT_PRODUCTION_URL) {
+    return `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`;
+  }
+  
+  return process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const input = CreateEscrowSchema.parse(body);
     const escrow = await createEscrow(input);
-    return NextResponse.json(escrow, { status: 201 });
+    
+    const baseUrl = getPublicBaseUrl(request);
+    const links = {
+      payer: createEscrowLink(escrow.id, "payer", baseUrl),
+      recipient: createEscrowLink(escrow.id, "recipient", baseUrl),
+      verifier: createEscrowLink(escrow.id, "verifier", baseUrl),
+    };
+    
+    return NextResponse.json({ ...escrow, links }, { status: 201 });
   } catch (error) {
     if (error instanceof z.ZodError) {
       return NextResponse.json({ error: "Invalid input", details: error.issues }, { status: 400 });

@@ -1,16 +1,32 @@
 import { NextRequest, NextResponse } from "next/server";
 import { releaseEscrow, getEscrow } from "@/lib/escrow";
+import { verifyEscrowToken, type EscrowRole } from "@/lib/escrow-links";
 import { createPayout } from "@/lib/paypal";
 import { z } from "zod";
 
 const ReleaseEscrowSchema = z.object({
   escrowId: z.string(),
+  role: z.string().optional(),
+  token: z.string().optional(),
 });
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { escrowId } = ReleaseEscrowSchema.parse(body);
+    const { escrowId, role, token } = ReleaseEscrowSchema.parse(body);
+    
+    const serviceKey = request.headers.get("x-clearsend-api-key");
+    const hasValidServiceKey = serviceKey && serviceKey === process.env.CLEAR_SEND_API_KEY;
+    
+    if (!hasValidServiceKey) {
+      if (!role || !token) {
+        return NextResponse.json({ error: "Missing role or token" }, { status: 401 });
+      }
+      
+      if (!verifyEscrowToken(escrowId, role as EscrowRole, token)) {
+        return NextResponse.json({ error: "Invalid token for this role" }, { status: 403 });
+      }
+    }
     
     const escrow = await getEscrow(escrowId);
     if (!escrow) {

@@ -309,7 +309,7 @@ async function searchRapidApi(input: SearchInput, date: string): Promise<{ offer
       };
     }
     
-    const params = new URLSearchParams({
+    const v1Params = new URLSearchParams({
       originSkyId: origin.skyId,
       destinationSkyId: destination.skyId,
       originEntityId: origin.entityId,
@@ -324,32 +324,84 @@ async function searchRapidApi(input: SearchInput, date: string): Promise<{ offer
     });
     
     let body: JsonRecord | null = null;
-    let statusValue = "incomplete";
+    let statusValue: string | boolean = false;
     let sessionId: string | null = null;
     let retries = 0;
-    const maxRetries = 5;
+    const maxRetries = 6;
     
-    // Initial search
-    const initialResponse = await fetch(`https://sky-scrapper.p.rapidapi.com/api/v2/flights/searchFlightsComplete?${params}`, { headers, cache: "no-store" });
+    // Try v1 endpoint with polling
+    const v1Response = await fetch(`https://sky-scrapper.p.rapidapi.com/api/v1/flights/searchFlights?${v1Params}`, { headers, cache: "no-store" });
     
-    if (initialResponse.status === 429) {
+    if (v1Response.status === 429) {
       return { offers: [], status: "error", message: "RapidAPI quota/rate limit exceeded (429)" };
     }
     
-    if (!initialResponse.ok) {
-      const errorBody = await initialResponse.json().catch(() => ({}));
-      const errorMsg = asString(asRecord(errorBody).message, initialResponse.statusText);
-      const trimmedBody = JSON.stringify(errorBody).slice(0, 300);
-      console.error("rapidapi_flight_search_error", { status: initialResponse.status, error: errorMsg, body: trimmedBody, origin: origin.skyId, destination: destination.skyId });
-      return { offers: [], status: "error", message: `RapidAPI HTTP ${initialResponse.status}: ${errorMsg}. Origin: ${origin.skyId}/${origin.entityId}, Destination: ${destination.skyId}/${destination.entityId}` };
+    if (v1Response.status === 403) {
+      const errorBody = await v1Response.json().catch(() => ({}));
+      const errorMsg = asString(asRecord(errorBody).message, "Not subscribed to this endpoint");
+      return { offers: [], status: "error", message: `RapidAPI HTTP 403: ${errorMsg}` };
     }
     
-    body = asRecord(await initialResponse.json().catch(() => ({})));
-    statusValue = asString(body.status, "");
-    sessionId = asString(asRecord(body.context).sessionId) || null;
+    if (!v1Response.ok) {
+      const errorBody = await v1Response.json().catch(() => ({}));
+      const errorMsg = asString(asRecord(errorBody).message, v1Response.statusText);
+      const trimmedBody = JSON.stringify(errorBody).slice(0, 300);
+      console.error("rapidapi_v1_error", { status: v1Response.status, error: errorMsg, body: trimmedBody });
+      
+      // Fall back to searchFlightsComplete only for non-quota errors
+      if (v1Response.status !== 429 && v1Response.status !== 403) {
+        console.info("rapidapi_fallback_to_v2_complete", { v1Status: v1Response.status });
+        const v2Params = new URLSearchParams({
+          originSkyId: origin.skyId,
+          destinationSkyId: destination.skyId,
+          originEntityId: origin.entityId,
+          destinationEntityId: destination.entityId,
+          date,
+          cabinClass: "economy",
+          adults: "1",
+          currency: "USD",
+          market: "en-US",
+          countryCode: "US",
+          sortBy: "best"
+        });
+        const v2Response = await fetch(`https://sky-scrapper.p.rapidapi.com/api/v2/flights/searchFlightsComplete?${v2Params}`, { headers, cache: "no-store" });
+        
+        if (!v2Response.ok) {
+          const v2ErrorBody = await v2Response.json().catch(() => ({}));
+          const v2ErrorMsg = asString(asRecord(v2ErrorBody).message, v2Response.statusText);
+          return { offers: [], status: "error", message: `RapidAPI v1 and v2 both failed. v1: ${errorMsg}, v2: ${v2ErrorMsg}` };
+        }
+        
+        body = asRecord(await v2Response.json().catch(() => ({})));
+      } else {
+        return { offers: [], status: "error", message: `RapidAPI HTTP ${v1Response.status}: ${errorMsg}` };
+      }
+    } else {
+      body = asRecord(await v1Response.json().catch(() => ({})));
+    }
+    
+    const data = asRecord(body.data);
+    const context = asRecord(data.context);
+    statusValue = context.status !== undefined ? context.status : body.status;
+    sessionId = asString(context.sessionId) || null;
+    
+    // Handle boolean status
+    const statusString = typeof statusValue === "boolean" 
+      ? (statusValue ? "complete" : "incomplete")
+      : asString(statusValue, "unknown");
+    
+    const bodyMessage = asString(body.message).slice(0, 500);
+    const contextStatusLog = asString(context.status);
+    
+    console.info("rapidapi_search_initial", { 
+      bodyStatus: statusValue,
+      bodyMessage: bodyMessage || "(none)",
+      contextStatus: contextStatusLog || "(none)",
+      sessionId: sessionId || "(none)"
+    });
     
     // Poll searchIncomplete if status is incomplete and we have a sessionId
-    while (statusValue === "incomplete" && sessionId && retries < maxRetries) {
+    while (statusString === "incomplete" && sessionId && retries < maxRetries) {
       await new Promise(resolve => setTimeout(resolve, 2000 * (retries + 1)));
       retries++;
       
@@ -362,23 +414,40 @@ async function searchRapidApi(input: SearchInput, date: string): Promise<{ offer
       }
       
       body = asRecord(await incompleteResponse.json().catch(() => ({})));
-      statusValue = asString(body.status, "");
+      const polledData = asRecord(body.data);
+      const polledContext = asRecord(polledData.context);
+      statusValue = polledContext.status !== undefined ? polledContext.status : body.status;
       
-      if (statusValue === "complete") {
+      const polledStatusString = typeof statusValue === "boolean"
+        ? (statusValue ? "complete" : "incomplete")
+        : asString(statusValue, "unknown");
+      
+      if (polledStatusString === "complete") {
         console.info("rapidapi_search_completed", { retries, sessionId });
         break;
       }
     }
     
-    if (!body || statusValue === "incomplete") {
-      return { offers: [], status: "error", message: `RapidAPI search incomplete after ${retries} retries. Status: ${statusValue}, SessionId: ${sessionId || "none"}. Origin: ${origin.skyId}/${origin.entityId}, Destination: ${destination.skyId}/${destination.entityId}` };
+    if (!body) {
+      return { offers: [], status: "error", message: `RapidAPI returned no body. Origin: ${origin.skyId}/${origin.entityId}, Destination: ${destination.skyId}/${destination.entityId}` };
     }
     
-    const context = asRecord(body.context);
-    const data = asRecord(body.data);
-    const directItineraries = Array.isArray(body.data) ? body.data : [];
-    const nestedItineraries = asRecord(data).itineraries;
-    const itineraries: unknown[] = directItineraries.length > 0 ? directItineraries : Array.isArray(nestedItineraries) ? nestedItineraries : [];
+    const finalData = asRecord(body.data);
+    const finalContext = asRecord(finalData.context);
+    const finalStatus = typeof statusValue === "boolean"
+      ? (statusValue ? "complete" : "incomplete")
+      : asString(statusValue, "unknown");
+    
+    if (finalStatus === "incomplete") {
+      return { offers: [], status: "error", message: `RapidAPI search incomplete after ${retries} retries. Status: ${finalStatus}, SessionId: ${sessionId || "none"}. Origin: ${origin.skyId}/${origin.entityId}, Destination: ${destination.skyId}/${destination.entityId}` };
+    }
+    
+    const itineraries: unknown[] = Array.isArray(finalData.itineraries) ? finalData.itineraries : [];
+    
+    console.info("rapidapi_search_result", {
+      contextStatus: asString(finalContext.status),
+      itineraryCount: itineraries.length
+    });
     
     const mapped = itineraries.map<FlightOffer>((raw, index) => {
       const itinerary = asRecord(raw);
@@ -386,13 +455,14 @@ async function searchRapidApi(input: SearchInput, date: string): Promise<{ offer
       const leg = asRecord(legs[0]);
       const segments = Array.isArray(leg.segments) ? leg.segments : [];
       const segment = asRecord(segments[0]);
-      const carrier = asRecord(segment.operatingCarrier || segment.marketingCarrier);
+      const marketingCarriers = Array.isArray(asRecord(leg.carriers).marketing) ? asRecord(leg.carriers).marketing : [];
+      const firstCarrier = asRecord(marketingCarriers[0]);
       const price = asRecord(itinerary.price);
       return {
         id: asString(itinerary.id, `rapid-${index}`),
         provider: "rapidapi" as const,
-        airline: asString(carrier.name, "Airline"),
-        airlineCode: asString(carrier.displayCode || carrier.alternateId),
+        airline: asString(firstCarrier.name, "Airline"),
+        airlineCode: asString(firstCarrier.alternateId),
         route: `${normalizeAirportCode(input.origin)} → ${normalizeAirportCode(input.destination)}`,
         origin: input.origin,
         destination: input.destination,
@@ -400,7 +470,7 @@ async function searchRapidApi(input: SearchInput, date: string): Promise<{ offer
         arrive: asString(segment.arrival, "Scheduled"),
         stops: Math.max(0, asNumber(leg.stopCount)),
         duration: asString(leg.durationInMinutes) ? `${asString(leg.durationInMinutes)} min` : undefined,
-        price: asNumber(price.raw, asNumber(price.amount)),
+        price: asNumber(price.raw) || asNumber(price.formatted),
         currency: asString(price.currency, "USD")
       };
     }).filter((offer) => offer.price !== null && offer.price > 0);
@@ -409,7 +479,7 @@ async function searchRapidApi(input: SearchInput, date: string): Promise<{ offer
       return { 
         offers: [], 
         status: "empty", 
-        message: `No priced offers found. Status: ${statusValue}, Context status: ${asString(context.status)}, Item count: ${itineraries.length}. Origin: ${origin.skyId}/${origin.entityId}, Destination: ${destination.skyId}/${destination.entityId}` 
+        message: `No priced offers found. Context status: ${asString(finalContext.status)}, Itinerary count: ${itineraries.length}. Origin: ${origin.skyId}/${origin.entityId}, Destination: ${destination.skyId}/${destination.entityId}` 
       };
     }
     
