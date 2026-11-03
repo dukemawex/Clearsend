@@ -1,3 +1,4 @@
+import { escrowPayoutAmount } from "./receipts";
 import { claimPayoutRetry, correctPayoutRecipient, EscrowError, getEscrow, payoutReceiver, reconcilePayoutStatus, recordPayoutRetry, releasePayoutRetryClaim, withEscrowLock, type EscrowRecord } from "./escrow";
 import { createPayout, getPayoutStatus, PayPalError } from "./paypal";
 import { isPayoutFailed, payoutOutcome } from "./payout-failure";
@@ -28,7 +29,7 @@ export async function retryPayout(id: string, fix: RecipientFix, deps: RetryDeps
     if (!rcv) { await releasePayoutRetryClaim(id, failedBatch); throw new EscrowError("No recipient PayPal email, phone or PayPal ID configured", "INVALID_RECIPIENT"); }
     let res;
     try {
-      res = await deps.pay({ ...rcv, amount: fixed.amount, currency: fixed.currency, note: `ClearSend Escrow Release (retry): ${fixed.specification.slice(0, 90)}`, senderItemId: fixed.id });
+      res = await deps.pay({ ...rcv, amount: escrowPayoutAmount(fixed.amount), currency: fixed.currency, note: `ClearSend Escrow Release (retry): ${fixed.specification.slice(0, 90)}`, senderItemId: fixed.id });
     } catch (err) {
       // 4xx: PayPal refused before any money moved, so the same failed batch may be retried again. 5xx/network: unknown, keep the claim.
       if (err instanceof PayPalError && err.status >= 400 && err.status < 500) await releasePayoutRetryClaim(id, failedBatch);

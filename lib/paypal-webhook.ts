@@ -101,7 +101,7 @@ async function route(type: string, r: Record<string, any>, eventId: string, d: W
   if (failed) {
     await d.notifyTelegram(escrow.id, `❌ Payout failed for escrow ${escrow.id}: ${explainPayoutError(code, effective)}${code ? ` (PayPal ${code})` : ""}. ${PAYOUT_RETRY_GUIDANCE}`).catch(() => undefined);
   } else if (PAYOUT_PROBLEMS.has(short) || PAYOUT_PROBLEMS.has(status)) {
-    await d.notifyTelegram(escrow.id, `⚠️ PayPal reports the payout for escrow ${escrow.id} is ${status}. ${escrow.amount} ${escrow.currency} to ${escrow.recipient} has not been confirmed as received. The payer should check PayPal (sandbox).`).catch(() => undefined);
+    await d.notifyTelegram(escrow.id, `⚠️ PayPal reports the payout for escrow ${escrow.id} is ${status}. The payout from the ${escrow.amount} ${escrow.currency} escrow to ${escrow.recipient} has not been confirmed as received. The payer should check PayPal (sandbox).`).catch(() => undefined);
   }
   return { status: "reconciled", subject: escrow.id, note: status };
 }

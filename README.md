@@ -145,6 +145,8 @@ Each browser gets a random, unguessable anonymous id (`cs_uid`, 128-bit, `httpOn
 
 ## Payment receipts
 
+**Fee model:** the payer is charged exactly the escrow amount (e.g. USD 5.00). ClearSend's 2.5% fee is withheld from the payout, so the recipient is paid amount minus fee (USD 4.87; same-currency payouts have no FX spread). A refund returns the full captured amount and keeps no fee. Each receipt shows the money that actually moved: charged to payer, sent to recipient, or refunded to payer.
+
 Every real PayPal sandbox event issues a receipt, persisted on the escrow or trip record at that moment (`receipts[]`): funding capture, release payout and refund (trips: payment capture and auto-refund). Fields: receipt number, escrow/trip id, time in UTC and Lagos (WAT), payer, recipient, amount, currency, fee (2.5% escrow; trips use their stored 3% service fee), live FX mid-market rate, 1.2% spread and destination amount (quote at event time, when the recipient country maps to a currency), PayPal order id, capture id, payout batch/item id or refund id, PayPal status, and the label "PayPal Sandbox - test payment, no real money". Nothing is seeded.
 
 - `/receipt/<id>?role=&token=`: printable receipt (Download PDF uses the browser print-to-PDF stylesheet), copy-link. Same HMAC role tokens as escrow routes; trips accept the payer token.
@@ -179,7 +181,7 @@ Tests: `npm test` (Telegram secret, parsing, role mapping and guards, webhook 40
 Webhook URL: `https://clearsend-sigma.vercel.app/api/webhooks/paypal`
 
 1. developer.paypal.com → Apps & Credentials → your sandbox app → Webhooks → Add webhook with the URL above.
-2. Subscribe to: `CHECKOUT.ORDER.APPROVED`, `PAYMENT.CAPTURE.COMPLETED`, `PAYMENT.CAPTURE.DENIED`, `PAYMENT.CAPTURE.PENDING`, `PAYMENT.CAPTURE.REFUNDED`, `PAYMENT.PAYOUTSBATCH.SUCCESS`, `PAYMENT.PAYOUTSBATCH.DENIED`, `PAYMENT.PAYOUTS-ITEM.SUCCEEDED`, `PAYMENT.PAYOUTS-ITEM.FAILED`, `PAYMENT.PAYOUTS-ITEM.BLOCKED`, `PAYMENT.PAYOUTS-ITEM.RETURNED`, `PAYMENT.PAYOUTS-ITEM.UNCLAIMED`, `PAYMENT.PAYOUTS-ITEM.HELD`, `PAYMENT.PAYOUTS-ITEM.REFUNDED`, `PAYMENT.PAYOUTS-ITEM.CANCELED`.
+2. Subscribe to: `CHECKOUT.ORDER.APPROVED`, `PAYMENT.CAPTURE.COMPLETED`, `PAYMENT.CAPTURE.DENIED`, `PAYMENT.CAPTURE.PENDING`, `PAYMENT.CAPTURE.REFUNDED`, `PAYMENT.PAYOUTSBATCH.SUCCESS`, `PAYMENT.PAYOUTSBATCH.DENIED`, `PAYMENT.PAYOUTS-ITEM.SUCCEEDED`, `PAYMENT.PAYOUTS-ITEM.FAILED`, `PAYMENT.PAYOUTS-ITEM.BLOCKED`, `PAYMENT.PAYOUTS-ITEM.RETURNED`, `PAYMENT.PAYOUTS-ITEM.UNCLAIMED`, `PAYMENT.PAYOUTS-ITEM.HELD`, `PAYMENT.PAYOUTS-ITEM.REFUNDED`, `PAYMENT.PAYOUTS-ITEM.CANCELED` (or "All events"). Payout item events can arrive minutes after the batch event in sandbox.
 3. Set `PAYPAL_WEBHOOK_ID` (the Webhook ID PayPal shows) in Vercel Production and Preview.
 
 Every delivery is verified with PayPal's `POST /v1/notifications/verify-webhook-signature` (transmission headers + `PAYPAL_WEBHOOK_ID`; sandbox or live base per `PAYPAL_ENV`). Missing ID, missing headers or a failed check returns 401 (fail closed). Events are deduplicated on event id in Upstash (30 day TTL).

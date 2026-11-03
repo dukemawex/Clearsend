@@ -37,9 +37,14 @@ export async function getPayPalAccessToken() {
   return body.access_token as string;
 }
 
-export async function createPayout(input: { recipientEmail?: string; receiver?: string; recipientType?: "EMAIL" | "PHONE" | "PAYPAL_ID"; amount: number; currency: string; note?: string; senderItemId?: string }) {
+export type PayoutInput = { recipientEmail?: string; receiver?: string; recipientType?: "EMAIL" | "PHONE" | "PAYPAL_ID"; amount: number; currency: string; note?: string; senderItemId?: string };
+/** Pure: exact Payouts v1 request body. Payouts uses amount {value, currency} (NOT currency_code). */
+export function payoutRequestBody(input: PayoutInput, batchId = `clearsend-${Date.now()}`) {
+  return { sender_batch_header: { sender_batch_id: batchId, email_subject: "You have a ClearSend payment", email_message: input.note ?? "A ClearSend remittance has arrived." }, items: [{ recipient_type: input.recipientType ?? "EMAIL", amount: { value: input.amount.toFixed(2), currency: input.currency.toUpperCase() }, receiver: input.receiver ?? input.recipientEmail, note: input.note, ...(input.senderItemId ? { sender_item_id: input.senderItemId } : {}) }] };
+}
+export async function createPayout(input: PayoutInput) {
   const token = await getPayPalAccessToken();
-  return paypalFetch("/v1/payments/payouts", { method: "POST", body: JSON.stringify({ sender_batch_header: { sender_batch_id: `clearsend-${Date.now()}`, email_subject: "You have a ClearSend payment", email_message: input.note ?? "A ClearSend remittance has arrived." }, items: [{ recipient_type: input.recipientType ?? "EMAIL", amount: { value: input.amount.toFixed(2), currency: input.currency }, receiver: input.receiver ?? input.recipientEmail, note: input.note, ...(input.senderItemId ? { sender_item_id: input.senderItemId } : {}) }] }) }, token);
+  return paypalFetch("/v1/payments/payouts", { method: "POST", body: JSON.stringify(payoutRequestBody(input)) }, token);
 }
 
 export async function getPayoutStatus(batchId: string) { return paypalFetch(`/v1/payments/payouts/${encodeURIComponent(batchId)}`, {}, await getPayPalAccessToken()); }
@@ -89,10 +94,21 @@ export async function captureOrder(orderId: string) { return paypalFetch(`/v2/ch
 
 export async function getOrder(orderId: string) { return paypalFetch(`/v2/checkout/orders/${encodeURIComponent(orderId)}`, {}, await getPayPalAccessToken()); }
 
-export async function refundCapture(captureId: string, amount?: { value: string; currency: string }, note?: string) {
+export type RefundAmount = { value: string; currency_code: string };
+/** Pure: exact Payments v2 refund body. Refunds use amount {value, currency_code}; omit amount for a full refund of the capture. */
+export function refundRequestBody(amount?: { value: number | string; currency: string }, note?: string) {
+  const body: { amount?: RefundAmount; note_to_payer?: string } = {};
+  if (amount) body.amount = { value: typeof amount.value === "number" ? amount.value.toFixed(2) : amount.value, currency_code: amount.currency.toUpperCase() };
+  if (note) body.note_to_payer = note.slice(0, 255);
+  return body;
+}
+/** Idempotency key: retries of the same escrow refund reuse it, so PayPal never refunds twice. */
+export function refundRequestId(captureId: string, key?: string) { return `cs-refund-${(key ?? captureId).replace(/[^A-Za-z0-9_-]/g, "").slice(0, 80)}`; }
+
+/** Full refund when amount is omitted (refunds exactly what was captured). */
+export async function refundCapture(captureId: string, amount?: { value: number | string; currency: string }, note?: string, idempotencyKey?: string) {
   const token = await getPayPalAccessToken();
-  const body = amount ? JSON.stringify({ amount, note_to_payer: note }) : JSON.stringify({ note_to_payer: note });
-  return paypalFetch(`/v2/payments/captures/${encodeURIComponent(captureId)}/refund`, { method: "POST", body }, token);
+  return paypalFetch(`/v2/payments/captures/${encodeURIComponent(captureId)}/refund`, { method: "POST", headers: { "PayPal-Request-Id": refundRequestId(captureId, idempotencyKey) }, body: JSON.stringify(refundRequestBody(amount, note)) }, token);
 }
 export const WEBHOOK_HEADERS = ["paypal-auth-algo", "paypal-cert-url", "paypal-transmission-id", "paypal-transmission-sig", "paypal-transmission-time"] as const;
 

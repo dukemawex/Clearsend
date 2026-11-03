@@ -1,3 +1,4 @@
+import { escrowPayoutAmount } from "@/lib/receipts";
 import { NextRequest, NextResponse } from "next/server";
 import { notifyReceipt } from "@/lib/chatbots/notify";
 import { claimSettlement, EscrowError, getEscrow, payoutReceiver, releaseEscrow, releaseSettlementClaim, withEscrowLock } from "@/lib/escrow";
@@ -32,7 +33,7 @@ export async function POST(request: NextRequest) {
       if (!claim.ok) return NextResponse.json({ error: `Escrow was already settled (${claim.by})` }, { status: 409 });
       let payoutResult;
       try {
-        payoutResult = await createPayout({ ...rcv, amount: fresh.amount, currency: fresh.currency, note: `ClearSend Escrow Release: ${fresh.specification.slice(0, 100)}`, senderItemId: fresh.id });
+        payoutResult = await createPayout({ ...rcv, amount: escrowPayoutAmount(fresh.amount), currency: fresh.currency, note: `ClearSend Escrow Release: ${fresh.specification.slice(0, 100)}`, senderItemId: fresh.id });
       } catch (e) {
         // PayPal refused the batch (4xx): no money left, so allow a retry. On 5xx/network the outcome is unknown: keep the claim.
         if (e instanceof PayPalError && e.status >= 400 && e.status < 500) await releaseSettlementClaim(escrowId);

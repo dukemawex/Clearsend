@@ -4,7 +4,7 @@ import { z } from "zod";
 import { StructuredSpec } from "./spec";
 import { checkPayoutEligibility, validateRecipientId, type RecipientType } from "./payout-countries";
 import { explainPayoutError, isPayoutFailed, PAYOUT_RETRY_GUIDANCE } from "./payout-failure";
-import { Receipt, buildReceipt, fxAtEvent, type ReceiptKind } from "./receipts";
+import { Receipt, buildReceipt, escrowPayoutAmount, fxAtEvent, type ReceiptKind } from "./receipts";
 
 export const EscrowState = z.enum(["created", "funded", "submitted", "verified", "rejected", "released", "refunded"]);
 export type EscrowState = z.infer<typeof EscrowState>;
@@ -306,7 +306,7 @@ async function updateEscrow(id: string, updates: Partial<EscrowRecord>, newState
       submitted: `Deliverable submitted by ${updated.recipient}.`,
       verified: `AI verifier: deliverable meets the specification. Waiting for a human to release.`,
       rejected: `AI verifier: deliverable does not meet the specification.`,
-      released: `Released: payout of ${updated.amount} ${updated.currency} to ${updated.recipient} submitted to PayPal (batch ${updated.payoutBatchId ?? "?"}); delivery pending PayPal confirmation.`,
+      released: `Released: payout of ${escrowPayoutAmount(updated.amount)} ${updated.currency} (after 2.5% fee) to ${updated.recipient} submitted to PayPal (batch ${updated.payoutBatchId ?? "?"}); delivery pending PayPal confirmation.`,
       refunded: `Refunded ${updated.amount} ${updated.currency} to ${updated.payer} via PayPal.`,
     };
     await recordActivity({ ownerId: updated.ownerId, kind: newState === "verified" || newState === "rejected" ? "decision" : ["funded", "released", "refunded"].includes(newState) ? "paypal" : "escrow", subject: id, actor: newState === "verified" || newState === "rejected" ? "agent" : "ClearSend", summary: msg[newState] ?? `Escrow is now ${newState}.`, data: { state: newState } });
@@ -448,7 +448,7 @@ export async function recordPayoutRetry(id: string, payoutBatchId: string, payou
   const receipt = await escrowReceipt({ ...e, payoutBatchId, payoutItemId }, "payout", status ?? "PENDING");
   const receipts = [...(e.receipts ?? []).filter((r) => r.kind !== "payout"), receipt];
   const updated = await updateEscrow(id, { payoutBatchId, payoutItemId, payoutStatus: status ?? "PENDING", payoutFailure: undefined, payoutAttempts: [...(e.payoutAttempts ?? []), attempt], receipts });
-  await recordActivity({ ownerId: e.ownerId, kind: "paypal", subject: id, actor: "ClearSend", summary: `Payout retried: ${e.amount} ${e.currency} to ${e.recipient} (${e.recipientCountry}) via PayPal Payout (new batch ${payoutBatchId}; previous batch ${attempt.batchId} was ${attempt.status}).`, data: { payoutBatchId, previous: attempt.batchId } });
+  await recordActivity({ ownerId: e.ownerId, kind: "paypal", subject: id, actor: "ClearSend", summary: `Payout retried: ${escrowPayoutAmount(e.amount)} ${e.currency} (after 2.5% fee) to ${e.recipient} (${e.recipientCountry}) via PayPal Payout (new batch ${payoutBatchId}; previous batch ${attempt.batchId} was ${attempt.status}).`, data: { payoutBatchId, previous: attempt.batchId } });
   return updated;
 }
 

@@ -67,7 +67,7 @@ test("retry refuses unless PayPal's API confirms the current batch failed", asyn
 test("retry with a corrected recipient pays once, keeps refund impossible, and can't repeat for the same batch", async () => {
   const e = await releasedEscrow("BATCH-R1");
   let paid = 0;
-  const deps: RetryDeps = { fetchStatus: (async (b: string) => (b === "BATCH-R1" ? denied(b) : pending(b))) as never, pay: (async (p: { receiver?: string }) => { paid++; assert.equal(p.receiver, "fixed@example.com"); return { batch_header: { payout_batch_id: "BATCH-R2", batch_status: "PENDING" }, items: [{ payout_item_id: "I-R2" }] }; }) as never };
+  const deps: RetryDeps = { fetchStatus: (async (b: string) => (b === "BATCH-R1" ? denied(b) : pending(b))) as never, pay: (async (p: { receiver?: string }) => { paid++; assert.equal(p.receiver, "fixed@example.com"); assert.equal((p as { amount?: number }).amount, 4.87, "retry pays amount minus 2.5% fee"); return { batch_header: { payout_batch_id: "BATCH-R2", batch_status: "PENDING" }, items: [{ payout_item_id: "I-R2" }] }; }) as never };
   await assert.rejects(retryPayout(e.id, { recipientCountry: "ZZ" }, deps), (err: Error & { code?: string }) => err.code === "PAYOUT_UNSUPPORTED");
   const r = await retryPayout(e.id, { recipientType: "EMAIL", recipientEmail: "fixed@example.com", recipientCountry: "US" }, deps);
   assert.equal(paid, 1);
@@ -76,6 +76,7 @@ test("retry with a corrected recipient pays once, keeps refund impossible, and c
   assert.equal(r.payoutAttempts?.[0].batchId, "BATCH-R1");
   assert.equal(r.payoutAttempts?.[0].code, "RECEIVER_COUNTRY_NOT_ALLOWED");
   assert.equal(r.receipts!.filter((x) => x.kind === "payout").length, 1);
+  assert.equal(r.receipts!.find((x) => x.kind === "payout")?.settledAmount, 4.87);
   assert.equal((await claimSettlement(e.id, "refund")).ok, false);
   // new batch is PENDING at PayPal: no further retry
   await assert.rejects(retryPayout(e.id, {}, deps), (err: Error & { code?: string }) => err.code === "PAYOUT_NOT_FAILED");

@@ -1,3 +1,4 @@
+import { escrowPayoutAmount } from "@/lib/receipts";
 // Platform-neutral escrow bot logic used by the Telegram bot.
 import { PAYOUT_RETRY_GUIDANCE } from "@/lib/payout-failure";
 // Reuses lib/escrow, lib/escrow-links, lib/fx, lib/paypal, lib/documents and the shared verifier.
@@ -378,7 +379,7 @@ export async function requestRelease(ctx: Ctx, idArg?: string): Promise<Reply> {
   if (!escrow.recipientEmail && !escrow.recipientPayerId) return { text: "No recipient PayPal email on this escrow.", ephemeral: true };
   const phrase = confirmPhrase("release", escrow.amount, escrow.currency);
   const nonce = await newConfirm({ action: "release", escrowId: escrow.id, platform: ctx.platform, userId: ctx.userId, chatId: ctx.chatId, phrase });
-  return { text: `Release ${money(escrow.amount, escrow.currency)} to ${escrow.recipient} via PayPal Payouts (sandbox)? Press confirm, then type exactly: ${phrase}`, buttons: [{ label: "Confirm release", id: `c:${nonce}`, style: "danger" }] };
+  return { text: `Release ${money(escrowPayoutAmount(escrow.amount), escrow.currency)} (escrow ${money(escrow.amount, escrow.currency)} minus 2.5% fee) to ${escrow.recipient} via PayPal Payouts (sandbox)? Press confirm, then type exactly: ${phrase}`, buttons: [{ label: "Confirm release", id: `c:${nonce}`, style: "danger" }] };
 }
 export async function requestRefund(ctx: Ctx, idArg?: string): Promise<Reply> {
   await botLog(ctx, idArg, "requested a refund (button + typed amount required)");
@@ -467,18 +468,18 @@ async function executeLocked(ctx: Ctx, p: Pending): Promise<Reply> {
       const rcv = payoutReceiver(escrow); if (!rcv) return { text: "No recipient PayPal email/phone/ID on this escrow." };
       const claim = await claimSettlement(escrow.id, "release");
       if (!claim.ok) return { text: `Escrow was already settled (${claim.by}).` };
-      const payout = await undoClaimOn4xx(escrow.id, () => createPayout({ ...rcv, amount: escrow.amount, currency: escrow.currency, note: `ClearSend Escrow Release: ${escrow.specification.slice(0, 100)}`, senderItemId: escrow.id }));
+      const payout = await undoClaimOn4xx(escrow.id, () => createPayout({ ...rcv, amount: escrowPayoutAmount(escrow.amount), currency: escrow.currency, note: `ClearSend Escrow Release: ${escrow.specification.slice(0, 100)}`, senderItemId: escrow.id }));
       const batchId = payout.batch_header?.payout_batch_id as string | undefined;
       if (!batchId) throw new Error("PayPal returned no payout batch id");
       const released = await releaseEscrow(escrow.id, batchId, payout.items?.[0]?.payout_item_id, payout.batch_header?.batch_status);
       await logActivity({ platform: ctx.platform, chatId: ctx.chatId, userId: ctx.userId, action: "release", escrowId: escrow.id, ok: true });
-      return withReceipt(released, "payout", `Released. Payout of ${money(escrow.amount, escrow.currency)} to ${escrow.recipient} submitted to PayPal Payouts (sandbox batch ${batchId}, status ${payout.batch_header?.batch_status ?? "PENDING"}). I'll post here if PayPal reports it failed.`);
+      return withReceipt(released, "payout", `Released. Payout of ${money(escrowPayoutAmount(escrow.amount), escrow.currency)} (${money(escrow.amount, escrow.currency)} minus 2.5% ClearSend fee) to ${escrow.recipient} submitted to PayPal Payouts (sandbox batch ${batchId}, status ${payout.batch_header?.batch_status ?? "PENDING"}). I'll post here if PayPal reports it failed.`);
     }
     if (!escrow.captureId || !["funded", "submitted", "rejected"].includes(escrow.state)) return { text: `Escrow is ${escrow.state}; nothing to refund.` };
     const claim = await claimSettlement(escrow.id, "refund");
     if (!claim.ok) return { text: `Escrow was already settled (${claim.by}).` };
     const captureId = escrow.captureId;
-    const r = await undoClaimOn4xx(escrow.id, () => refundCapture(captureId, { value: escrow.amount.toFixed(2), currency: escrow.currency }, "ClearSend escrow refund (chat)"));
+    const r = await undoClaimOn4xx(escrow.id, () => refundCapture(captureId, { value: escrow.amount, currency: escrow.currency }, "ClearSend escrow refund (chat)", escrow.id));
     const refunded = await refundEscrow(escrow.id, r.id as string, r.status as string | undefined);
     await logActivity({ platform: ctx.platform, chatId: ctx.chatId, userId: ctx.userId, action: "refund", escrowId: escrow.id, ok: true });
     return withReceipt(refunded, "refund", `Refunded ${money(escrow.amount, escrow.currency)} to the payer (PayPal sandbox refund ${r.id}).`);
