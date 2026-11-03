@@ -3,7 +3,8 @@ import { RoomFeed } from "@/components/room/RoomFeed";
 import { Stepper } from "@/components/room/Stepper";
 import { Badge, ButtonLink, Card, ErrorBox, Eyebrow, Money, Room, StateBadge } from "@/components/room/ui";
 import { ClearSendLogo } from "@/components/clearsend-logo";
-import { listActivity } from "@/lib/activity";
+import { listOwnerActivity } from "@/lib/activity";
+import { currentOwner } from "@/lib/owner";
 import { listEscrows } from "@/lib/escrow";
 import { listTrips } from "@/lib/trips";
 import { escrowStep, tripStep, WORKFLOW } from "@/lib/workflow";
@@ -23,7 +24,8 @@ const PARTIES = [
 
 export default async function Home() {
   const since = Date.now() - 7 * 864e5;
-  const [esc, trips, searches] = await Promise.all([safe(listEscrows), safe(() => listTrips()), safe(() => listActivity(200, { kind: "flight-search" }))]);
+  const owner = await currentOwner();
+  const [esc, trips, searches] = await Promise.all([safe(() => listEscrows(owner)), safe(() => listTrips(owner)), safe(() => listOwnerActivity(owner, 200, { kind: "flight-search" }))]);
   const err = esc.error || trips.error;
   const counts = WORKFLOW.map(() => 0);
   counts[0] = (searches.data ?? []).filter((a) => Date.parse(a.at) > since).length;

@@ -3,14 +3,8 @@ import Link from "next/link";
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Use ClearSend in Telegram" };
 
-function Status({ ok, label }: { ok: boolean; label: string }) {
-  return <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-semibold ${ok ? "bg-green-100 text-green-800" : "bg-gray-200 text-gray-700"}`}>{ok ? "Configured" : "Not configured"}: {label}</span>;
-}
-
 export default function ChatBotsPage() {
   const tgBot = process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME;
-  const tgReady = !!(tgBot && process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_WEBHOOK_SECRET);
-  const base = process.env.NEXT_PUBLIC_APP_URL && !process.env.NEXT_PUBLIC_APP_URL.includes("localhost") ? process.env.NEXT_PUBLIC_APP_URL : process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : "https://<your-app>";
 
   return (
     <div className="min-h-screen p-8">
@@ -31,23 +25,17 @@ export default function ChatBotsPage() {
             <li><b>Payer releases</b> (only if verified) with a button and the typed words <code>RELEASE 150.00 USD</code>, which sends a PayPal Payout. Payer or verifier can refund with <code>REFUND …</code>.</li>
             <li><b>Receipts</b>: after each real PayPal sandbox capture, payout and refund the bot posts a receipt summary in the group and DMs the payer a private receipt link.</li>
           </ol>
-          <p className="text-sm"><Link className="underline" href="/escrow">Every chat escrow also shows up on the Escrow page</Link>.</p>
+          <p className="text-sm"><Link className="underline" href="/escrow">Escrows you create in chat stay private to that chat; open a role link to view one on the web</Link>.</p>
         </section>
 
         <section className="rounded-xl border p-6 space-y-3">
-          <div className="flex items-center justify-between"><h2 className="text-xl font-semibold">Telegram</h2><Status ok={tgReady} label={tgBot ? `@${tgBot}` : "bot"} /></div>
+          <div className="flex items-center justify-between"><h2 className="text-xl font-semibold">Telegram</h2></div>
           {tgBot ? (
             <div className="flex gap-3 flex-wrap">
               <a className="px-4 py-2 rounded-md bg-sky-600 text-white" href={`https://t.me/${tgBot}?startgroup=true`}>Add to a Telegram group</a>
               <a className="px-4 py-2 rounded-md border" href={`https://t.me/${tgBot}`}>Open a DM with the bot</a>
             </div>
-          ) : <p className="text-sm text-gray-600">Not configured: set <code>NEXT_PUBLIC_TELEGRAM_BOT_USERNAME</code>, <code>TELEGRAM_BOT_TOKEN</code> and <code>TELEGRAM_WEBHOOK_SECRET</code> to enable the add-to-group link.</p>}
-          <ol className="list-decimal ml-6 space-y-1 text-sm">
-            <li>In Telegram, message <b>@BotFather</b>, send <code>/newbot</code>, choose a name and a username ending in <code>bot</code>. Copy the token.</li>
-            <li>Optional: <code>/setjoingroups</code> → Enable. Keep <code>/setprivacy</code> Enabled (the bot only needs commands and replies to its own prompts).</li>
-            <li>In Vercel set <code>TELEGRAM_BOT_TOKEN</code>, <code>TELEGRAM_WEBHOOK_SECRET</code> (random, letters/digits/_/-), <code>NEXT_PUBLIC_TELEGRAM_BOT_USERNAME</code>, then redeploy.</li>
-            <li>Run <code>node scripts/telegram-set-webhook.mjs {base}</code> to point Telegram at <code>{base}/api/telegram/webhook</code> and set the command menu.</li>
-          </ol>
+          ) : <p className="text-sm text-gray-600">The Telegram bot isn&apos;t available on this deployment yet.</p>}
         </section>
 
       </div>

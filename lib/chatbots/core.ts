@@ -14,8 +14,8 @@ import { confirmPhrase, isEmail, isEscrowId, isInviteCode, parseInlineEscrow, pa
 import { recordActivity } from "@/lib/activity";
 import { receiptMessages } from "./notify";
 
-function botLog(ctx: Pick<Ctx, "platform" | "userName" | "isGroup">, subject: string | undefined, summary: string) {
-  return recordActivity({ kind: "chat", subject: subject || `${ctx.platform}-chat`, actor: `${ctx.platform}:${ctx.userName}`, summary: `${summary} (${ctx.platform}${ctx.isGroup ? " group" : " DM"})` });
+function botLog(ctx: Pick<Ctx, "platform" | "userName" | "isGroup"> & { chatId?: string }, subject: string | undefined, summary: string) {
+  return recordActivity({ ownerId: ctx.chatId ? `${ctx.platform}:${ctx.chatId}` : undefined, kind: "chat", subject: subject || `${ctx.platform}-chat`, actor: `${ctx.platform}:${ctx.userName}`, summary: `${summary} (${ctx.platform}${ctx.isGroup ? " group" : " DM"})` });
 }
 
 export type Platform = "telegram";
@@ -200,7 +200,7 @@ export async function answerDraft(ctx: Ctx, text: string): Promise<Reply> {
 export async function createFromFields(ctx: Ctx, d: Draft): Promise<Reply> { return continueDraft(ctx, d); }
 
 async function finishCreate(ctx: Ctx, d: Required<Pick<Draft, "amount" | "currency" | "recipient" | "recipientEmail" | "recipientCountry" | "specification" | "payerEmail">> & Draft): Promise<Reply> {
-  const escrow = await createEscrow({ payer: ctx.userName.slice(0, 80), payerEmail: d.payerEmail, recipient: d.recipient, recipientEmail: d.recipientEmail || undefined, recipientPhone: d.recipientPhone, recipientType: d.recipientPhone ? "PHONE" : "EMAIL", recipientCountry: d.recipientCountry, amount: d.amount, currency: d.currency, specification: d.specification, structuredSpec: d.structuredSpec, acceptanceCriteria: d.structuredSpec?.acceptanceCriteria, specDocument: d.specDocument });
+  const escrow = await createEscrow({ payer: ctx.userName.slice(0, 80), payerEmail: d.payerEmail, recipient: d.recipient, recipientEmail: d.recipientEmail || undefined, recipientPhone: d.recipientPhone, recipientType: d.recipientPhone ? "PHONE" : "EMAIL", recipientCountry: d.recipientCountry, amount: d.amount, currency: d.currency, specification: d.specification, structuredSpec: d.structuredSpec, acceptanceCriteria: d.structuredSpec?.acceptanceCriteria, specDocument: d.specDocument, ownerId: `${ctx.platform}:${ctx.chatId}` });
   await bindRole(escrow.id, "payer", ctx);
   await linkChat(ctx, escrow.id);
   await logActivity({ platform: ctx.platform, chatId: ctx.chatId, userId: ctx.userId, action: "create", escrowId: escrow.id, ok: true });
@@ -294,7 +294,7 @@ async function guard(ctx: Ctx, escrow: EscrowRecord, action: string): Promise<Re
 // ---------- fund ----------
 const SANDBOX_HINT = [
   "This is the PayPal SANDBOX: real PayPal logins and real cards don't work, and you can't sign up for a new account there.",
-  process.env.SANDBOX_BUYER_EMAIL && process.env.PAYPAL_ENV !== "live" ? `Log in with the test buyer: ${process.env.SANDBOX_BUYER_EMAIL} (password on the ClearSend help page: ${appUrl()}/paypal/help).` : `Use a sandbox buyer account (see ${appUrl()}/paypal/help).`,
+  process.env.SANDBOX_BUYER_EMAIL && process.env.PAYPAL_ENV !== "live" ? `Log in with the test buyer: ${process.env.SANDBOX_BUYER_EMAIL} (the password is shown on the escrow funding step on the web).` : `Use a PayPal sandbox personal account, or pay as guest with a PayPal sandbox test card if PayPal offers it.`,
   "If PayPal offers \"Pay with Debit or Credit Card\", a documented sandbox test card such as Visa 4012 8888 8888 1881 with any future expiry and any 3-digit CVV can work; PayPal decides whether that option is shown.",
 ].join("\n");
 
@@ -418,7 +418,7 @@ export async function submitPhrase(ctx: Ctx, nonce: string, typed: string): Prom
 }
 
 async function execute(ctx: Ctx, nonce: string, p: Pending): Promise<Reply> {
-  await recordActivity({ kind: "confirmation", subject: p.escrowId, actor: `${ctx.platform}:${ctx.userName}`, summary: `Confirmed ${p.action} in ${ctx.platform}${p.phrase ? " by typing the exact phrase" : " with a button"}.` });
+  await recordActivity({ ownerId: `${ctx.platform}:${ctx.chatId}`, kind: "confirmation", subject: p.escrowId, actor: `${ctx.platform}:${ctx.userName}`, summary: `Confirmed ${p.action} in ${ctx.platform}${p.phrase ? " by typing the exact phrase" : " with a button"}.` });
   if (!(await once(k("done", nonce), DAY))) return { text: "Already handled.", ephemeral: true };
   await del(k("confirm", nonce));
   const escrow = await getEscrow(p.escrowId);

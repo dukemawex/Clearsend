@@ -6,7 +6,8 @@ import { z } from "zod";
 import { captureOrder, createOrder, createPayout, getOrder, getPayoutStatus } from "@/lib/paypal";
 import { searchFlights } from "@/lib/flights";
 import { getMidMarketRate } from "@/lib/fx";
-import { createEscrow, getEscrow, listEscrows } from "@/lib/escrow";
+import { createEscrow, getEscrow, listEscrows, ownerCanSee } from "@/lib/escrow";
+import { currentOwner } from "@/lib/owner";
 
 const nvidia = createOpenAI({ apiKey: process.env.NVIDIA_API_KEY ?? "not-configured", baseURL: process.env.NVIDIA_BASE_URL ?? "https://integrate.api.nvidia.com/v1" });
 const openrouter = createOpenAI({ apiKey: process.env.OPENROUTER_API_KEY ?? "not-configured", baseURL: process.env.OPENROUTER_BASE_URL ?? "https://openrouter.ai/api/v1", headers: { "HTTP-Referer": process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000", "X-Title": "ClearSend" } });
@@ -168,8 +169,8 @@ export const agentTools = {
       }
     }; 
   } }),
-  getEscrow: tool({ description: "Get the current state and details of an escrow by ID. Shows state, timeline, amounts, specification, deliverable (if submitted), and evaluation results.", inputSchema: z.object({ id: z.string() }), execute: async ({ id }) => getEscrow(id) }),
-  listEscrows: tool({ description: "List all escrows in the system, ordered by creation date (newest first).", inputSchema: z.object({}), execute: async () => listEscrows() }),
+  getEscrow: tool({ description: "Get the current state and details of an escrow by ID. Shows state, timeline, amounts, specification, deliverable (if submitted), and evaluation results.", inputSchema: z.object({ id: z.string() }), execute: async ({ id }) => { const e = await getEscrow(id); if (!e || !(await ownerCanSee(e, await currentOwner()))) return { error: "Escrow not found for this user. Open it with its role link." }; return e; } }),
+  listEscrows: tool({ description: "List the current user's escrows (created by them or shared with them via a role link), newest first.", inputSchema: z.object({}), execute: async () => listEscrows(await currentOwner()) }),
 };
 
 export async function runAgent(messages: Array<{ role: "user" | "assistant" | "system"; content: string }>) {

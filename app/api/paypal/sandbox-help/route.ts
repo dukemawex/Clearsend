@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
 
-// Throwaway PayPal SANDBOX buyer login for judges/testers. Only returned when the app runs in sandbox
+// Throwaway PayPal SANDBOX buyer login for testers. Only returned when the app runs in sandbox
 // and the owner set SANDBOX_BUYER_EMAIL / SANDBOX_BUYER_PASSWORD. These are never real PayPal credentials.
 export async function GET() {
   const sandbox = (process.env.PAYPAL_ENV ?? "sandbox") === "sandbox";

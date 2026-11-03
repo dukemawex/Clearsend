@@ -89,7 +89,7 @@ test("telegram route: 401 without secret", async () => {
 
 test("telegram country step rejects NG with a clear payout error", async () => {
   const core = await import("../lib/chatbots/core");
-  const u = { platform: "telegram" as const, userId: "tg-ng-test", chatId: "tg-ng-test", name: "TEST" };
+  const u = { platform: "telegram" as const, userId: "tg-ng-test", chatId: "tg-ng-test", userName: "TEST", isGroup: false };
   let r = await core.startCreate(u, "20 USD to Ada <ada@example.com> for one logo");
   for (let i = 0; i < 6 && !/country/i.test(r.text); i++) r = await core.answerDraft(u, "payer@example.com");
   if (/country/i.test(r.text)) { r = await core.answerDraft(u, "NG"); assert.match(r.text, /doesn't list NG/); }

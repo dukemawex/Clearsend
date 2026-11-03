@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { deleteActivity, hasServiceKey, listActivity, recordActivity } from "@/lib/activity";
+import { deleteActivity, hasServiceKey, listActivity, listOwnerActivity, recordActivity } from "@/lib/activity";
+import { ownerFromRequest } from "@/lib/owner";
+import { sharedEscrowIds } from "@/lib/escrow";
 
 export const dynamic = "force-dynamic";
 
@@ -15,8 +17,11 @@ export async function GET(req: Request) {
   try {
     const u = new URL(req.url);
     const limit = Math.min(500, Math.max(1, Number(u.searchParams.get("limit") ?? 100) || 100));
-    const items = await listActivity(limit, { subject: u.searchParams.get("subject") ?? undefined, kind: u.searchParams.get("kind") ?? undefined, q: u.searchParams.get("q") ?? undefined });
+    const filter = { subject: u.searchParams.get("subject") ?? undefined, kind: u.searchParams.get("kind") ?? undefined, q: u.searchParams.get("q") ?? undefined };
     const full = hasServiceKey(req);
+    // Browsers only see their own activity (cs_uid) and activity on escrows shared with them; the service key sees all.
+    const owner = ownerFromRequest(req);
+    const items = full ? await listActivity(limit, filter) : await listOwnerActivity(owner, limit, filter, await sharedEscrowIds(owner).catch(() => []));
     return NextResponse.json({ ok: true, count: items.length, items: full ? items : items.map((a) => ({ ...a, data: undefined })) });
   } catch (e) {
     return NextResponse.json({ ok: false, error: (e as Error).message }, { status: 503 });

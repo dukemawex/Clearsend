@@ -134,7 +134,7 @@ export async function GET(request: Request) {
       approval_required_for_money_movement: true
     },
     links: {
-      documentation: `${baseUrl}/judges`,
+      documentation: "https://github.com/dukemawex/Clearsend#readme",
       github: "https://github.com/dukemawex/Clearsend"
     }
   });

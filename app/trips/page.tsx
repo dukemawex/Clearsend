@@ -1,4 +1,5 @@
 import { TripCard } from "@/components/TripCard";
+import { currentOwner } from "@/lib/owner";
 import { listTrips, type TripRecord } from "@/lib/trips";
 import Link from "next/link";
 
@@ -7,7 +8,7 @@ export const dynamic = "force-dynamic";
 export default async function TripsPage() {
   let trips: TripRecord[];
   try {
-    trips = await listTrips();
+    trips = await listTrips(await currentOwner());
   } catch {
     trips = [];
   }

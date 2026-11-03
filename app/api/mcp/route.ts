@@ -4,13 +4,14 @@ import { recentActivity } from "@/lib/chatbots/store";
 import { loadReceipt } from "@/lib/receipt-access";
 import { getEscrow } from "@/lib/escrow";
 import { getTrip } from "@/lib/trips";
+import { runAsOwner } from "@/lib/owner";
 
 function chatBotsInfo() {
   const base = process.env.NEXT_PUBLIC_APP_URL && !process.env.NEXT_PUBLIC_APP_URL.includes("localhost") ? process.env.NEXT_PUBLIC_APP_URL : process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : null;
   const tg = process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME;
   return {
     telegram: { configured: !!(tg && process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_WEBHOOK_SECRET), addToGroup: tg ? `https://t.me/${tg}?startgroup=true` : null, webhook: base ? `${base}/api/telegram/webhook` : null },
-    setupPage: base ? `${base}/chat-bots` : "/chat-bots",
+    docs: "https://github.com/dukemawex/Clearsend#readme",
   };
 }
 
@@ -171,6 +172,10 @@ export async function POST(request: Request) {
     // MCP protocol: call tool
     if (method === "tools/call") {
       const { name, arguments: args } = params;
+      // Without CLEAR_SEND_API_KEY the endpoint is unauthenticated: never return stored records then.
+      if (!apiKey && ["getReceipt", "listChatEscrowActivity", "getEscrow", "listEscrows"].includes(name)) {
+        return NextResponse.json({ error: "Data tools need CLEAR_SEND_API_KEY to be configured and sent as x-clearsend-api-key." }, { status: 401 });
+      }
 
       if (name === "getReceipt") {
         let result: unknown;
@@ -204,7 +209,8 @@ export async function POST(request: Request) {
       let result;
       try {
         // Call the execute function with the args and an empty options object
-        result = await (tool.execute as (input: unknown, options?: { abortSignal?: AbortSignal }) => Promise<unknown>)(args, {});
+        // Agent tools run as the MCP owner: list/get only see escrows created over MCP, never browser or Telegram data.
+        result = await runAsOwner("mcp:service", () => (tool.execute as (input: unknown, options?: { abortSignal?: AbortSignal }) => Promise<unknown>)(args, {}));
       } catch (error) {
         return NextResponse.json(
           { error: error instanceof Error ? error.message : "Tool execution failed" },

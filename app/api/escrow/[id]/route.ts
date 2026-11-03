@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getEscrow, setPayoutStatus } from "@/lib/escrow";
+import { addSharedEscrow, getEscrow, setPayoutStatus } from "@/lib/escrow";
+import { ownerFromRequest } from "@/lib/owner";
 import { getPayoutStatus } from "@/lib/paypal";
 
 const TERMINAL = new Set(["SUCCESS", "FAILED", "RETURNED", "REFUNDED", "REVERSED", "BLOCKED", "DENIED"]);
@@ -43,6 +44,9 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
       return NextResponse.json({ error: "Escrow not found" }, { status: 404 });
     }
     
+    // A visitor who opened a valid role link gets this one escrow in their own "shared with me" list.
+    const owner = ownerFromRequest(request);
+    if (!hasValidServiceKey && owner && escrow.ownerId !== owner) await addSharedEscrow(owner, escrow.id, (new URL(request.url).searchParams.get("role") ?? "payer") as EscrowRole).catch(() => {});
     let out = escrow;
     if (escrow.state === "released" && escrow.payoutBatchId && !TERMINAL.has(escrow.payoutStatus ?? "")) {
       try {
