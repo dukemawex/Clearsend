@@ -98,7 +98,7 @@ export async function POST(request: Request) {
         },
         {
           name: "createEscrow",
-          description: "Create a PayPal sandbox escrow for secure payment with deliverable verification. Use for freelance jobs, service agreements, or any transaction requiring proof of delivery before release.",
+          description: "Create a PayPal sandbox escrow for secure payment with deliverable verification. Use for freelance jobs, service agreements, or any transaction requiring proof of delivery before release. After creation, the payer can attach a spec document and the recipient a deliverable document (PDF/DOCX/TXT/image, 5 MB) via POST /api/escrow/upload (multipart: escrowId, role, token, kind=spec|deliverable, file); the AI verifier reads the extracted text as untrusted data.",
           inputSchema: {
             type: "object",
             properties: {

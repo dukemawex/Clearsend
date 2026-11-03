@@ -80,6 +80,14 @@ Open http://localhost:3000 and try a golden prompt. The agent should:
 
 ---
 
+## Voice and document upload
+
+- **Voice (browser-only, free):** hold 🎙 in the agent chat to dictate with the Web Speech API `SpeechRecognition`; the live transcript shows before you send. Toggle **🔊 Speak replies** to hear answers via `speechSynthesis`, with a stop button. Language selector covers en-NG, en-US, en-GB, fr-FR, es-ES, pt-BR, yo-NG, ha-NG, sw-KE (support varies by browser). Unsupported browsers (e.g. Firefox) show a fallback message; typing always works.
+- **Chat attachments:** 📎 PDF, DOCX, TXT/MD, PNG/JPG/WEBP, max 5 MB (Vercel caps request bodies at 4.5 MB, so the UI rejects larger files up front). `POST /api/documents/extract` (multipart `file`) returns extracted text; nothing is stored. The text is sent to the agent inside `<untrusted_document>` tags and the system prompt treats it as data, never instructions.
+- **Escrow documents:** `POST /api/escrow/upload` (multipart `escrowId`, `role`, `token`, `kind=spec|deliverable`, `file`). Payer uploads the spec while the escrow is `created`/`funded`; recipient uploads the deliverable while `funded`. Role tokens are required (or `x-clearsend-api-key`). Extracted text (max 20,000 chars per file, 6 files per escrow) is stored in the escrow record in Upstash Redis. Vercel Blob is not configured, so original files are not kept. The public `/api/escrow/list` strips document text.
+- **Verifier:** `/api/escrow/verify` fences spec and deliverable text as untrusted, tells the model to flag injection attempts, and rejects deliverables with no readable text.
+- **Extraction:** `unpdf` for PDFs (text layer only, scans give no text), `mammoth` for DOCX, UTF-8 for TXT, `tesseract.js` OCR for images. OCR downloads its language data at runtime; if that fails on the serverless function the UI says so and asks for a text format.
+
 ## Local development
 
 ```bash

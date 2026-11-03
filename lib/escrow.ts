@@ -21,6 +21,17 @@ export const EscrowRecord = z.object({
   payoutBatchId: z.string().optional(),
   payoutItemId: z.string().optional(),
   deliverable: z.string().optional(),
+  documents: z.array(z.object({
+    role: z.enum(["spec", "deliverable"]),
+    name: z.string(),
+    kind: z.string(),
+    size: z.number(),
+    text: z.string(),
+    truncated: z.boolean(),
+    method: z.string(),
+    note: z.string().optional(),
+    uploadedAt: z.number(),
+  })).optional(),
   evaluationResult: z.object({
     met: z.boolean(),
     reasons: z.string(),
@@ -224,8 +235,9 @@ export async function submitDeliverable(id: string, deliverable: string): Promis
   const escrow = await getEscrow(id);
   if (!escrow) throw new EscrowError(`Escrow ${id} not found`, "NOT_FOUND");
   if (escrow.state !== "funded") throw new EscrowError(`Escrow ${id} is ${escrow.state}, expected 'funded'`, "INVALID_STATE");
+  if (!deliverable.trim() && !(escrow.documents ?? []).some((d) => d.role === "deliverable")) throw new EscrowError("Add a deliverable description or upload a deliverable document", "EMPTY_DELIVERABLE");
   
-  return updateEscrow(id, { deliverable }, "submitted");
+  return updateEscrow(id, { deliverable: deliverable.trim() || "(see uploaded deliverable documents)" }, "submitted");
 }
 
 export async function verifyDeliverable(id: string, result: EscrowRecord["evaluationResult"]): Promise<EscrowRecord> {
@@ -253,4 +265,12 @@ export async function refundEscrow(id: string, refundId: string): Promise<Escrow
   if (!escrow.captureId) throw new EscrowError(`Escrow ${id} has no captureId, cannot refund`, "NO_CAPTURE");
   
   return updateEscrow(id, { orderId: refundId }, "refunded");
+}
+
+export async function attachEscrowDocument(id: string, role: "spec" | "deliverable", doc: { name: string; kind: string; size: number; text: string; truncated: boolean; method: string; note?: string; uploadedAt: number }): Promise<EscrowRecord> {
+  const escrow = await getEscrow(id);
+  if (!escrow) throw new EscrowError(`Escrow ${id} not found`, "NOT_FOUND");
+  const docs = escrow.documents ?? [];
+  if (docs.length >= 6) throw new EscrowError("This escrow already has the maximum of 6 documents", "TOO_MANY_DOCUMENTS");
+  return updateEscrow(id, { documents: [...docs, { role, ...doc }] });
 }

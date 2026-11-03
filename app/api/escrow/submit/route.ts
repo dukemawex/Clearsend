@@ -5,7 +5,7 @@ import { z } from "zod";
 
 const SubmitDeliverableSchema = z.object({
   escrowId: z.string(),
-  deliverable: z.string(),
+  deliverable: z.string().default(""),
   role: z.string().optional(),
   token: z.string().optional(),
 });
