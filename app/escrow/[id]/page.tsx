@@ -25,6 +25,8 @@ export default function EscrowPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [deliverable, setDeliverable] = useState("");
+  const [retryEmail, setRetryEmail] = useState("");
+  const [retryCountry, setRetryCountry] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [approveUrl, setApproveUrl] = useState<string | null>(null);
 
@@ -113,9 +115,28 @@ export default function EscrowPage() {
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Failed to release funds");
       
       await loadEscrow();
-      alert("Funds released successfully!");
+      alert("Payout sent to PayPal. Watch the payout status for delivery.");
     } catch (err) {
       alert(err instanceof Error ? err.message : "Failed to release funds");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleRetryPayout = async () => {
+    if (!escrow) return;
+    const phrase = `RELEASE ${escrow.amount.toFixed(2)} ${escrow.currency}`;
+    const typed = prompt(`Retry the payout to ${retryEmail || escrow.recipientEmail || escrow.recipient} (${retryCountry || escrow.recipientCountry}). Type ${phrase} to confirm.`);
+    if (typed === null) return;
+    if (typed.trim().replace(/\s+/g, " ").toUpperCase() !== phrase) { alert("That did not match. Nothing was sent."); return; }
+    setIsSubmitting(true);
+    try {
+      const res = await fetch(`/api/escrow/retry-payout`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ escrowId: id, role, token, confirmation: typed, ...(retryEmail ? { recipientType: "EMAIL", recipientEmail: retryEmail.trim() } : {}), ...(retryCountry ? { recipientCountry: retryCountry.trim().toUpperCase() } : {}) }) });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Failed to retry payout");
+      await loadEscrow();
+      alert("New payout sent to PayPal. Watch the payout status for delivery.");
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Failed to retry payout");
     } finally {
       setIsSubmitting(false);
     }
@@ -205,7 +226,7 @@ export default function EscrowPage() {
       case "verified":
         return role === "payer" ? "Review and approve release" : "Waiting for payer approval";
       case "released":
-        return "Funds have been released to recipient";
+        return escrow.payoutFailure ? `Payout failed: ${escrow.payoutFailure.reason}` : escrow.payoutStatus === "SUCCESS" ? "PayPal confirmed the payout to the recipient" : "Payout sent to PayPal; waiting for PayPal to confirm delivery";
       case "refunded":
         return "Escrow has been refunded to payer";
       case "rejected":
@@ -465,6 +486,15 @@ export default function EscrowPage() {
               >
                 {isSubmitting ? "Releasing..." : "Approve & Release Funds"}
               </Button>
+            )}
+
+            {role === "payer" && escrow.state === "released" && escrow.payoutFailure && (
+              <div className="space-y-2 rounded-lg border border-red-200 p-3" data-testid="retry-payout">
+                <p className="text-sm font-semibold text-red-800">Fix the recipient and retry the payout</p>
+                <input className="w-full rounded border px-2 py-1 text-sm" placeholder={`Recipient PayPal email (now ${escrow.recipientEmail ?? "not set"})`} value={retryEmail} onChange={(e) => setRetryEmail(e.target.value)} />
+                <input className="w-full rounded border px-2 py-1 text-sm" placeholder={`Country code (now ${escrow.recipientCountry})`} maxLength={2} value={retryCountry} onChange={(e) => setRetryCountry(e.target.value)} />
+                <Button onClick={handleRetryPayout} disabled={isSubmitting} className="w-full">{isSubmitting ? "Retrying..." : "Retry payout"}</Button>
+              </div>
             )}
 
             {(role === "payer" || role === "verifier") && ["funded", "submitted", "rejected"].includes(escrow.state) && (

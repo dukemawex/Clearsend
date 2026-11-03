@@ -4,6 +4,7 @@
 // never create money movement (no captures, payouts or refunds are started from here; release stays human-gated).
 import type { EscrowRecord } from "./escrow";
 import type { TripRecord } from "./trips";
+import { explainPayoutError, isPayoutFailed, payoutOutcome, PAYOUT_RETRY_GUIDANCE } from "./payout-failure";
 
 export const HANDLED_EVENTS = [
   "CHECKOUT.ORDER.APPROVED",
@@ -25,7 +26,7 @@ export type WebhookDeps = {
   findTrip(q: { id?: string; orderId?: string; captureId?: string }): Promise<TripRecord | null>;
   fundEscrow(id: string, orderId: string, captureId: string, status: string): Promise<EscrowRecord>;
   refundEscrow(id: string, refundId: string, status: string): Promise<EscrowRecord>;
-  reconcilePayout(id: string, status: string, itemId?: string): Promise<EscrowRecord>;
+  reconcilePayout(id: string, status: string, itemId?: string, errorCode?: string, batchId?: string): Promise<EscrowRecord>;
   activity(a: { ownerId?: string; subject: string; summary: string; data?: Record<string, unknown> }): Promise<void>;
   notifyTelegram(escrowId: string, text: string): Promise<void>;
 };
@@ -87,10 +88,19 @@ async function route(type: string, r: Record<string, any>, eventId: string, d: W
     await d.activity({ ownerId: escrow.ownerId, subject: escrow.id, summary: `PayPal webhook: ${type} received but escrow is ${escrow.state}, not released. Not applied; please check.`, data });
     return { status: "logged", subject: escrow.id, note: "escrow not released" };
   }
-  await d.reconcilePayout(escrow.id, status, itemId);
-  await d.activity({ ownerId: escrow.ownerId, subject: escrow.id, summary: `PayPal confirms payout ${isBatch ? "batch" : "item"} status ${status} for ${escrow.recipient} (batch ${batchId ?? "?"}).`, data: { ...data, payoutStatus: status } });
+  if (batchId && escrow.payoutBatchId && batchId !== escrow.payoutBatchId) {
+    await d.activity({ ownerId: escrow.ownerId, subject: escrow.id, summary: `PayPal webhook: ${type} for earlier payout batch ${batchId} (current batch ${escrow.payoutBatchId}). Recorded only.`, data });
+    return { status: "logged", subject: escrow.id, note: "stale batch" };
+  }
+  const code = isBatch ? payoutOutcome({ errors: r.errors ?? r.batch_header?.errors }).code : payoutOutcome(r).code;
+  const failed = isPayoutFailed(status) || isPayoutFailed(type.split(".").pop());
+  const effective = failed && !isPayoutFailed(status) ? type.split(".").pop()! : status;
+  await d.reconcilePayout(escrow.id, effective, itemId, code, batchId);
+  await d.activity({ ownerId: escrow.ownerId, subject: escrow.id, summary: `PayPal confirms payout ${isBatch ? "batch" : "item"} status ${effective}${code ? ` (${code})` : ""} for ${escrow.recipient} (batch ${batchId ?? "?"}).`, data: { ...data, payoutStatus: effective, code } });
   const short = type.split(".").pop()!;
-  if (PAYOUT_PROBLEMS.has(short) || PAYOUT_PROBLEMS.has(status)) {
+  if (failed) {
+    await d.notifyTelegram(escrow.id, `❌ Payout failed for escrow ${escrow.id}: ${explainPayoutError(code, effective)}${code ? ` (PayPal ${code})` : ""}. ${PAYOUT_RETRY_GUIDANCE}`).catch(() => undefined);
+  } else if (PAYOUT_PROBLEMS.has(short) || PAYOUT_PROBLEMS.has(status)) {
     await d.notifyTelegram(escrow.id, `⚠️ PayPal reports the payout for escrow ${escrow.id} is ${status}. ${escrow.amount} ${escrow.currency} to ${escrow.recipient} has not been confirmed as received. The payer should check PayPal (sandbox).`).catch(() => undefined);
   }
   return { status: "reconciled", subject: escrow.id, note: status };
