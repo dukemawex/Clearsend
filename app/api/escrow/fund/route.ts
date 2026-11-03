@@ -34,7 +34,11 @@ export async function POST(request: NextRequest) {
     return await withEscrowLock(escrowId, async () => {
       const fresh = await getEscrow(escrowId);
       if (!fresh || fresh.state !== "created") return NextResponse.json({ error: `Escrow is already ${fresh?.state ?? "gone"}` }, { status: 409 });
-      const order = await getOrder(orderId);
+      let order: unknown;
+      try { order = await getOrder(orderId); } catch (e) {
+        console.warn("escrow_fund_order_lookup_failed", e instanceof Error ? e.message.slice(0, 120) : e);
+        return NextResponse.json({ error: "PayPal order rejected: ClearSend could not read this order from PayPal, so it was not captured" }, { status: 422 });
+      }
       const mismatch = checkOrderMatchesEscrow(order, fresh);
       if (mismatch) return NextResponse.json({ error: `PayPal order rejected: ${mismatch}` }, { status: 422 });
       if (!(await bindOrderToEscrow(orderId, escrowId))) return NextResponse.json({ error: "PayPal order rejected: it is already used for another escrow" }, { status: 409 });
