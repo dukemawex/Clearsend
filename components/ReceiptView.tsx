@@ -31,6 +31,7 @@ export function ReceiptView({ r }: { r: Receipt }) {
         {r.description && <Row k="For" v={r.description} />}
         <Row k="Amount" v={money(r.amount, r.currency)} strong />
         <Row k={`ClearSend fee (${r.feePercent}%)`} v={money(r.fee, r.currency)} />
+        {r.failureReason && <Row k="Payout failed because" v={r.failureReason} strong />}
         {r.settledAmount !== undefined && <Row k={SETTLED_LABEL[r.kind]} v={money(r.settledAmount, r.currency)} strong />}
         {r.fx ? <>
           <Row k="Mid-market rate" v={`1 ${r.currency} = ${r.fx.midMarketRate.toFixed(4)} ${r.fx.destinationCurrency}`} />

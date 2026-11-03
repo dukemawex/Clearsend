@@ -1,3 +1,4 @@
+import { lookupPayoutError } from "@/lib/payout-sync";
 import { NextResponse } from "next/server";
 import { verifyWebhookSignature } from "@/lib/paypal";
 import { processPayPalEvent, type WebhookDeps } from "@/lib/paypal-webhook";
@@ -19,6 +20,7 @@ const deps: WebhookDeps = {
   fundEscrow: async (id, o, c, s) => { const e = await fundEscrow(id, o, c, s); await notifyReceipt(e, "funding").catch(() => undefined); return e; },
   refundEscrow: async (id, r, s) => { const e = await refundEscrow(id, r, s); await notifyReceipt(e, "refund").catch(() => undefined); return e; },
   reconcilePayout: reconcilePayoutStatus,
+  lookupPayoutError: (batchId, itemId) => lookupPayoutError(batchId, itemId),
   activity: async (a) => { await recordActivity({ kind: "paypal", actor: "PayPal webhook", ...a }); },
   notifyTelegram: async (escrowId, text) => {
     const chat = await getJSON<string>(k("escrowchat", escrowId, "telegram"));

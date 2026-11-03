@@ -4,7 +4,7 @@ import { z } from "zod";
 import { StructuredSpec } from "./spec";
 import { checkPayoutEligibility, validateRecipientId, type RecipientType } from "./payout-countries";
 import { explainPayoutError, isPayoutFailed, PAYOUT_RETRY_GUIDANCE } from "./payout-failure";
-import { Receipt, buildReceipt, escrowPayoutAmount, fxAtEvent, type ReceiptKind } from "./receipts";
+import { Receipt, buildReceipt, normalizeEscrowPayoutReceipt, escrowPayoutAmount, fxAtEvent, type ReceiptKind } from "./receipts";
 
 export const EscrowState = z.enum(["created", "funded", "submitted", "verified", "rejected", "released", "refunded"]);
 export type EscrowState = z.infer<typeof EscrowState>;
@@ -413,13 +413,13 @@ export async function reconcilePayoutStatus(id: string, payoutStatus: string, pa
     const code = errorCode ?? e.payoutFailure?.code;
     if (e.payoutFailure && e.payoutFailure.batchId === e.payoutBatchId && e.payoutFailure.code === code) return e;
     const reason = explainPayoutError(code, st);
-    const receipts = (e.receipts ?? []).map((r) => (r.kind === "payout" ? { ...r, status: `FAILED${code ? ` (${code})` : ""}` } : r));
+    const receipts = (e.receipts ?? []).map((r) => (r.kind === "payout" ? normalizeEscrowPayoutReceipt(r, { status: `FAILED${code ? ` (${code})` : ""}`, failureReason: reason }) : r));
     const updated = await updateEscrow(id, { payoutStatus: "FAILED", payoutItemId: e.payoutItemId ?? payoutItemId, payoutFailure: { status: st, code, reason, batchId: e.payoutBatchId, at: Date.now() }, receipts });
     await recordActivity({ ownerId: e.ownerId, kind: "paypal", subject: id, actor: "PayPal", summary: `Payout failed: ${reason} (PayPal ${st}${code ? `, ${code}` : ""}, batch ${e.payoutBatchId ?? "?"}). ${PAYOUT_RETRY_GUIDANCE}`, data: { payoutStatus: st, code, batchId: e.payoutBatchId } });
     return updated;
   }
   if (e.payoutFailure) return e; // never un-fail a batch PayPal already confirmed failed
-  const receipts = (e.receipts ?? []).map((r) => (r.kind === "payout" ? { ...r, status: st } : r));
+  const receipts = (e.receipts ?? []).map((r) => (r.kind === "payout" ? normalizeEscrowPayoutReceipt(r, { status: st }) : r));
   return updateEscrow(id, { payoutStatus: st, payoutItemId: e.payoutItemId ?? payoutItemId, receipts });
 }
 

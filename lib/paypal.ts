@@ -47,6 +47,7 @@ export async function createPayout(input: PayoutInput) {
   return paypalFetch("/v1/payments/payouts", { method: "POST", body: JSON.stringify(payoutRequestBody(input)) }, token);
 }
 
+export async function getPayoutItem(itemId: string) { return paypalFetch(`/v1/payments/payouts-item/${encodeURIComponent(itemId)}`, {}, await getPayPalAccessToken()); }
 export async function getPayoutStatus(batchId: string) { return paypalFetch(`/v1/payments/payouts/${encodeURIComponent(batchId)}`, {}, await getPayPalAccessToken()); }
 
 function appBase() {
