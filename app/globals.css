@@ -21,3 +21,18 @@ button, textarea { font: inherit; } button { -webkit-tap-highlight-color: transp
 .ui-button { border: 0; border-radius: 999px; padding: .65rem 1rem; font-size: .875rem; font-weight: 700; transition: all .2s ease; }.ui-button-primary { background: var(--paypal-blue); color: white; }.ui-button-primary:hover { background: var(--paypal-navy); }.ui-button-secondary { background: #eaf6ff; color: var(--paypal-blue); }.ui-button-ghost { background: transparent; color: var(--paypal-blue); }.ui-button-danger { background: #fff1f0; color: var(--danger); }.ui-card-header { padding: 1.25rem 1.25rem .5rem; }.ui-card-content { padding: 1.25rem; }.ui-badge { display: inline-flex; align-items: center; border-radius: 999px; padding: .25rem .6rem; font-size: .7rem; font-weight: 700; }
 @media (max-width: 900px) { .journey-layout { grid-template-columns: 1fr; }.side-column { padding-top: 0; }.summary { max-width: 600px; } }
 @media (max-width: 600px) { .topbar-meta { font-size: 9px; }.topbar-meta .divider { display: none; }.journey-layout { padding: 28px 18px 50px; }.chat-heading { display: block; }.secure-badge { display: inline-block; margin-top: 18px; }.message.user { max-width: 88%; }.breakdown { grid-template-columns: 1fr 1fr; }.breakdown .received { grid-column: span 2; }.flight-option { grid-template-columns: 30px 1fr auto; }.flight-time { display: none; }.composer-note { font-size: 9px; }.approval-bar { display: block; }.approve { margin-top: 12px; width: 100%; } }
+
+/* App Navigation */
+.app-nav { position: fixed; top: 0; left: 0; right: 0; height: 72px; background: rgba(255,255,255,.95); backdrop-filter: blur(18px); border-bottom: 1px solid var(--slate-200); display: flex; align-items: center; justify-content: space-between; padding: 0 clamp(20px, 5vw, 60px); z-index: 50; }
+.nav-brand { display: flex; align-items: center; gap: 10px; }
+.nav-brand a { display: flex; align-items: center; gap: 10px; text-decoration: none; color: var(--paypal-navy); font-weight: 800; font-size: 15px; letter-spacing: -.4px; }
+.nav-links { display: flex; gap: 4px; }
+.nav-link { display: flex; align-items: center; gap: 8px; padding: 10px 16px; border-radius: 12px; text-decoration: none; color: var(--slate-700); font-size: 14px; font-weight: 500; transition: all .2s ease; }
+.nav-link:hover { background: var(--slate-100); color: var(--paypal-navy); }
+.nav-link.active { background: #eff8ff; color: var(--paypal-blue); }
+.nav-icon { font-size: 18px; }
+.nav-label { display: none; }
+@media (min-width: 768px) { .nav-label { display: inline; } }
+.nav-meta { display: flex; align-items: center; gap: 8px; color: var(--slate-500); font: 10px "DM Mono", monospace; text-transform: uppercase; letter-spacing: .08em; }
+.nav-status { display: none; }
+@media (min-width: 768px) { .nav-status { display: inline; } }
