@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { submitDeliverable } from "@/lib/escrow";
-import { verifyEscrowToken, type EscrowRole } from "@/lib/escrow-links";
+import { getEscrow, submitDeliverable } from "@/lib/escrow";
+import { authorizeEscrow } from "@/lib/escrow-auth";
 import { z } from "zod";
 
 const SubmitDeliverableSchema = z.object({

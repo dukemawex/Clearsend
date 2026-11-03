@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyDeliverable, getEscrow } from "@/lib/escrow";
-import { verifyEscrowToken, type EscrowRole } from "@/lib/escrow-links";
+import { authorizeEscrow } from "@/lib/escrow-auth";
 import { z } from "zod";
 import { evaluateEscrow } from "@/lib/verifier";
 
