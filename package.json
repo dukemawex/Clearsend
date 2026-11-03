@@ -13,9 +13,12 @@
     "@ai-sdk/react": "^4.0.163",
     "@paypal/agent-toolkit": "^1.11.0",
     "ai": "^7.0.159",
+    "mammoth": "^1.13.0",
     "next": "^15.5.7",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
+    "tesseract.js": "^7.0.0",
+    "unpdf": "^1.7.0",
     "zod": "^4.1.12"
   },
   "devDependencies": {

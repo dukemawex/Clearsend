@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { EscrowRecord } from "@/lib/escrow";
 import type { EscrowRole } from "@/lib/escrow-links";
+import { EscrowDocuments } from "@/components/EscrowDocuments";
 
 export default function EscrowPage() {
   const params = useParams();
@@ -53,10 +54,10 @@ export default function EscrowPage() {
       const res = await fetch(`/api/escrow/submit`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id, deliverable }),
+        body: JSON.stringify({ escrowId: id, deliverable, role, token }),
       });
 
-      if (!res.ok) throw new Error("Failed to submit deliverable");
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Failed to submit deliverable");
       
       await loadEscrow();
       setDeliverable("");
@@ -74,7 +75,7 @@ export default function EscrowPage() {
       const res = await fetch(`/api/escrow/verify`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id }),
+        body: JSON.stringify({ escrowId: id, role, token }),
       });
 
       if (!res.ok) throw new Error("Failed to verify deliverable");
@@ -98,7 +99,7 @@ export default function EscrowPage() {
       const res = await fetch(`/api/escrow/release`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id }),
+        body: JSON.stringify({ escrowId: id, role, token }),
       });
 
       if (!res.ok) throw new Error("Failed to release funds");
@@ -122,7 +123,7 @@ export default function EscrowPage() {
       const res = await fetch(`/api/escrow/refund`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id }),
+        body: JSON.stringify({ escrowId: id, role, token }),
       });
 
       if (!res.ok) throw new Error("Failed to refund escrow");
@@ -300,6 +301,8 @@ export default function EscrowPage() {
           </CardContent>
         </Card>
 
+        <EscrowDocuments escrow={escrow} role={role} token={token} onChange={loadEscrow} />
+
         {/* Deliverable Submission (for recipient) */}
         {role === "recipient" && escrow.state === "funded" && (
           <Card className="mb-6">
@@ -321,7 +324,7 @@ export default function EscrowPage() {
               </div>
               <Button 
                 onClick={handleSubmitDeliverable} 
-                disabled={isSubmitting || !deliverable.trim()}
+                disabled={isSubmitting || (!deliverable.trim() && !(escrow.documents ?? []).some((d) => d.role === "deliverable"))}
                 className="w-full"
               >
                 {isSubmitting ? "Submitting..." : "Submit Deliverable"}

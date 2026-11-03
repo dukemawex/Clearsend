@@ -4,4 +4,4 @@ out/
 .env*
 !.env.example
 .vercel/
-*.log
+*.logtsconfig.tsbuildinfo

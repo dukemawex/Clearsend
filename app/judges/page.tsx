@@ -208,6 +208,17 @@ export default function JudgesPage() {
         </ul>
       </section>
 
+      <section style={{ marginBottom: "48px", padding: "24px", background: "#eff8ff", borderRadius: "8px", border: "1px solid #bfdbfe" }}>
+        <h2 style={{ fontSize: "24px", fontWeight: "600", marginBottom: "16px", color: "#003087" }}>🎙 Voice + 📎 Documents in the PayPal agentic flow</h2>
+        <ul style={{ lineHeight: 1.8, paddingLeft: "20px" }}>
+          <li><strong>Hold-to-talk:</strong> in the agent chat (home page), hold 🎙 and speak. The live transcript appears above the composer and you can edit it before sending. Uses the browser Web Speech API (Chrome desktop/Android, Safari iOS); other browsers show a clear fallback message. Language selector: en-NG, en-US, en-GB, fr-FR, es-ES, pt-BR, yo-NG, ha-NG, sw-KE (availability depends on the browser).</li>
+          <li><strong>Spoken replies:</strong> tick “🔊 Speak replies” to hear each agent answer via speechSynthesis; “■ Stop speaking” cuts it off. No paid voice services.</li>
+          <li><strong>Attach in chat:</strong> 📎 accepts PDF, DOCX, TXT/MD, PNG/JPG/WEBP up to 5 MB. <code>/api/documents/extract</code> pulls the text (unpdf, mammoth, tesseract.js OCR for images when the server can run it) and the agent receives it fenced as untrusted data, e.g. a job spec to turn into an escrow.</li>
+          <li><strong>Escrow documents:</strong> on the payer link, upload a spec; on the recipient link, upload the deliverable. <code>/api/escrow/upload</code> checks the HMAC role token, sanitizes filenames, checks file signatures, never executes content, and stores the extracted text in the escrow record (Upstash Redis). The AI verifier compares the real deliverable text against the spec, with a prompt-injection guard, before the payer can release a PayPal payout.</li>
+          <li><strong>Unchanged guards:</strong> PayPal sandbox only; every money-moving action still needs the approval bar or typed confirmation.</li>
+        </ul>
+      </section>
+
       <section style={{ marginBottom: "48px", padding: "24px", background: "#fef2f2", borderRadius: "8px", border: "1px solid #fecaca" }}>
         <h2 style={{ fontSize: "24px", fontWeight: "600", marginBottom: "16px", color: "#991b1b" }}>🧪 Sandbox Test Walkthrough</h2>
         

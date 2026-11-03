@@ -20,7 +20,13 @@ export function Message({ message, onApproval, onFlight, onQuickReply }: { messa
   
   const renderedParts = parts.map((part, index) => {
     if (part.type === "text") {
-      const cleanedText = message.role === "assistant" ? sanitizeText(part.text || "") : (part.text || "");
+      const raw = part.text || "";
+      if (message.role === "user" && raw.includes("<untrusted_document")) {
+        const names = Array.from(raw.matchAll(/<untrusted_document name="([^"]*)"/g)).map((m) => m[1]);
+        const visible = raw.replace(/<untrusted_document[\s\S]*?<\/untrusted_document>/g, "").replace(/\[Attached document[^\]]*\]/g, "").trim();
+        return <div key={index}>{visible && <p>{visible}</p>}<div className="file-chips">{names.map((n, i) => <span key={i} className="file-chip">📎 {n}</span>)}</div></div>;
+      }
+      const cleanedText = message.role === "assistant" ? sanitizeText(raw) : raw;
       if (!cleanedText) return null;
       return <p key={index}>{cleanedText}</p>;
     }
