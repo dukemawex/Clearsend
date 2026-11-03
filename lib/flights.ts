@@ -1,6 +1,10 @@
+import { searchKernelFares, type KernelEvidence } from "./kernel-flights";
 export type FlightOffer = {
   id: string;
-  provider: "duffel" | "rapidapi" | "aviationstack" | "openflights" | "opensky";
+  provider: "kernel" | "duffel" | "rapidapi" | "aviationstack" | "openflights" | "opensky";
+  /** Kernel fares: "Live market price (Google Flights)". Booking is a Duffel sandbox test booking. */
+  priceLabel?: string;
+  evidence?: KernelEvidence;
   airline: string;
   airlineCode?: string;
   route: string;
@@ -16,7 +20,7 @@ export type FlightOffer = {
   scheduleOnly?: boolean;
 };
 
-type SearchInput = { origin: string; destination: string; date?: string };
+type SearchInput = { origin: string; destination: string; date?: string; passengers?: number };
 type JsonRecord = Record<string, unknown>;
 type ProviderResult = { name: string; status: "success" | "error" | "empty"; message?: string };
 
@@ -874,6 +878,27 @@ export async function searchFlights(input: SearchInput) {
     firstResult = { provider: "rapidapi", result: rapidResult };
   }
   
+  // Kernel: real Google Flights prices read in a Kernel stealth cloud browser (opt-in via ENABLE_KERNEL_FALLBACK + KERNEL_API_KEY).
+  const kernelResult = await searchKernelFares({ origin: normalizedInput.origin, destination: normalizedInput.destination, date, passengers: input.passengers });
+  providerResults.push({ name: "kernel", status: kernelResult.status, message: kernelResult.message ?? (kernelResult.elapsedMs !== undefined ? `${kernelResult.offers.length} fares in ${(kernelResult.elapsedMs / 1000).toFixed(1)}s${kernelResult.cached ? " (cached)" : ""}` : undefined) });
+  if (kernelResult.offers.length > 0) {
+    const sortedOffers: FlightOffer[] = kernelResult.offers.map((o) => ({ ...o }));
+    sortedOffers[0].isCheapest = true;
+    console.info("flight_provider_served", { provider: "kernel", count: sortedOffers.length, origin: normalizedInput.origin, destination: normalizedInput.destination, cheapestPrice: sortedOffers[0].price, ms: kernelResult.elapsedMs, cached: !!kernelResult.cached });
+    return {
+      provider: "kernel",
+      origin: normalizedInput.origin,
+      destination: normalizedInput.destination,
+      date: input.date ?? null,
+      dateUsed: date,
+      options: sortedOffers,
+      success: true,
+      providers: providerResults,
+      evidence: kernelResult.evidence,
+      note: "Live market prices read from Google Flights in a Kernel cloud browser. Booking is a test booking via the Duffel sandbox; no real ticket is issued."
+    };
+  }
+
   // Duffel fallback
   const duffelResult = await searchDuffel(normalizedInput, date);
   providerResults.push({ name: "duffel", status: duffelResult.status as "success" | "error" | "empty", message: duffelResult.message });

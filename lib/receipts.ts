@@ -54,6 +54,8 @@ export const Receipt = z.object({
     payoutItemId: z.string().optional(),
     refundId: z.string().optional(),
   }),
+  /** Flight trips: the sandbox booking made after funding (Duffel test mode, no real ticket). */
+  booking: z.object({ provider: z.literal("duffel"), mode: z.literal("test"), orderId: z.string(), bookingReference: z.string().optional(), label: z.string() }).optional(),
   status: z.string(),
   environment: z.string(),
 });

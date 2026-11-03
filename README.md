@@ -21,9 +21,9 @@ ClearSend is a cross-border escrow, remittance and flight-booking agent. Money m
 
 | PayPal tool | What ClearSend does with it | Code |
 | --- | --- | --- |
-| **Orders v2** (`/v2/checkout/orders`, create / get / capture) | Payer funds an escrow or pays for a flight. Each order carries `custom_id` `escrow:<id>` / `trip:<id>`; ClearSend checks id, amount and currency before capturing once. | `lib/paypal.ts`, `app/api/escrow/fund` |
+| **Orders v2** (`/v2/checkout/orders`, create / get / capture) | Payer funds an escrow or pays for a flight. Each order carries `custom_id` `escrow:<id>` / `trip:<id>`; ClearSend checks id, amount and currency before capturing once. | `lib/paypal.ts`, `app/api/escrow/fund`, `lib/trip-booking.ts` |
 | **Payouts** (`/v1/payments/payouts`, batch + item GET) | Releases escrow to the recipient's PayPal account (email, phone or PayPal ID), reads payout status and error codes, and supports one safe retry per failed batch. | `lib/paypal.ts`, `lib/payout-*.ts`, `app/api/escrow/release`, `retry-payout` |
-| **Payments v2 refunds** (`/v2/payments/captures/{id}/refund`) | Refunds a funded escrow to the payer (`amount {value, currency_code}`, idempotent `PayPal-Request-Id`); trips auto-refund if ticketing fails. | `lib/paypal.ts`, `app/api/escrow/refund` |
+| **Payments v2 refunds** (`/v2/payments/captures/{id}/refund`) | Refunds a funded escrow to the payer (`amount {value, currency_code}`, idempotent `PayPal-Request-Id`); a flight trip is refunded automatically (once, idempotent) if the Duffel sandbox test booking fails. | `lib/paypal.ts`, `app/api/escrow/refund`, `lib/trip-booking.ts` |
 | **Webhooks** with signature verification (`/v1/notifications/verify-webhook-signature`) | `POST /api/webhooks/paypal` verifies every delivery against `PAYPAL_WEBHOOK_ID` (fail closed), de-duplicates events, and reconciles funding, refunds and payout outcomes. | `lib/paypal.ts`, `lib/paypal-webhook.ts` |
 | **PayPal Agent Toolkit** (`@paypal/agent-toolkit/ai-sdk`) | Exposes PayPal tools (orders, invoices, products, subscriptions, disputes, payments, payouts) to the chat agent in sandbox mode, only when the user's message is about payments and behind tool approval. | `lib/agent.ts` |
 
@@ -33,13 +33,14 @@ ClearSend is a cross-border escrow, remittance and flight-booking agent. Money m
 | --- | --- | --- | --- |
 | **Agent chat** (`/agent`, AI SDK `generateText` with tools) | Remittance quotes, flight search and booking, escrow creation; money tools need approval. | NVIDIA NIM `meta/llama-3.3-70b-instruct` (`NVIDIA_MODEL`) first, then OpenRouter `nvidia/nemotron-3-ultra-550b-a55b:free` (`OPENROUTER_MODEL`). | `lib/agent.ts` |
 | **Deliverable verifier** (AI SDK `generateObject`) | Checks the recipient's deliverable against the escrow spec and acceptance criteria; documents are fenced as untrusted, injection is flagged. Release still needs a typed human confirmation. | NVIDIA `meta/llama-3.3-70b-instruct` if `NVIDIA_API_KEY` is set, otherwise OpenRouter `nvidia/nemotron-3-ultra-550b-a55b:free`. | `lib/verifier.ts` |
+| **Fare-page backup parser** (Kernel flight search) | Only when the Google Flights result rows can't be read from the page structure, reads the visible page text and returns fares; every price it returns must appear verbatim in the page text or it is dropped. | OpenRouter free models from `lib/ai-models.ts` (`OPENROUTER_MODEL`, then `OPENROUTER_FALLBACK_MODELS`). | `lib/kernel-flights.ts` |
 | **Spec extraction** (`POST /api/spec/extract`) | Turns an uploaded document into an editable structured spec (deliverables, criteria, deadline, amount); never invents criteria. | OpenRouter `nvidia/nemotron-3-ultra-550b-a55b:free`, then `OPENROUTER_FALLBACK_MODELS` (default `google/gemma-4-31b-it:free,nvidia/nemotron-3.5-lightning:free`), then NVIDIA `meta/llama-3.3-70b-instruct`. | `lib/spec.ts` |
 
 All defaults live in `lib/ai-models.ts`. They are free models (NVIDIA NIM free tier, OpenRouter `:free`). Voice input and output use the browser's Web Speech API, so no AI key is needed for voice.
 
 ### Other technologies
 
-Next.js 15 (App Router) and React, Vercel AI SDK (`ai`, `@ai-sdk/openai`), Upstash Redis REST (escrows, receipts, locks, webhook de-duplication), Vercel hosting, the Telegram Bot API (`@Moiffe_bot`), Duffel (test mode) and RapidAPI Sky-Scrapper for flight offers (Aviationstack / OpenFlights / OpenSky for schedules only), open FX rate providers, zod, `unpdf`, `mammoth` and `tesseract.js` for document text, and an MCP-over-HTTP endpoint at `/api/mcp`.
+Next.js 15 (App Router) and React, Vercel AI SDK (`ai`, `@ai-sdk/openai`), Upstash Redis REST (escrows, receipts, locks, webhook de-duplication), Vercel hosting, the Telegram Bot API (`@Moiffe_bot`), Kernel cloud browsers (`@onkernel/sdk` + `playwright-core`) reading live Google Flights prices, Duffel (test mode) for sandbox test bookings, RapidAPI Sky-Scrapper for flight offers (Aviationstack / OpenFlights / OpenSky for schedules only), open FX rate providers, zod, `unpdf`, `mammoth` and `tesseract.js` for document text, and an MCP-over-HTTP endpoint at `/api/mcp`.
 
 ### Sponsor integrations
 
@@ -134,7 +135,7 @@ ClearSend's home page (`/`) is the **Room**: a live activity feed, a 9-step work
 
 - **Activity log:** `lib/activity.ts` writes real entries to Upstash (`cs-activity:*`) on every escrow and trip state change, flight search, and Telegram bot action. `GET /api/activity?kind=&subject=&q=` is public without raw payloads; `POST` (agent status) and `DELETE ?id=|?subject=` (test cleanup) need `x-clearsend-api-key`. Empty states are honest; nothing is seeded.
 - **PayPal return/cancel:** orders return to `/paypal/return?kind=escrow|trip|order&id=…` and `/paypal/cancel`. These URLs never carry a role or trip token. Role links are kept only on the payer's device.
-- **Prices:** `/plan` books only live Sky-Scrapper or Duffel (test) fares. Open-data results are labelled "fare unavailable" and cannot be booked.
+- **Prices:** `/plan` pays only for priced fares (Kernel/Google Flights live market prices, Sky-Scrapper, or Duffel test); every booking is a test booking via the Duffel sandbox. Open-data results are labelled "fare unavailable" and cannot be booked.
 - **Theme:** ClearSend white and blue by default, optional dark mode for Room pages (toggle in the nav), mobile menu below 1024px.
 
 ## Voice and document upload
@@ -253,12 +254,12 @@ Open http://localhost:3000. Flight search uses the configured worldwide provider
 | `PAYPAL_EXPERIENCE` | Set to `legacy` to use `application_context` instead of `payment_source.paypal.experience_context` | No |
 | `SANDBOX_BUYER_EMAIL`, `SANDBOX_BUYER_PASSWORD` | Optional throwaway US sandbox Personal buyer shown on the funding panel (sandbox only) | No |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`, `NEXT_PUBLIC_TELEGRAM_BOT_USERNAME` | Telegram bot (see [Use ClearSend in Telegram](#use-clearsend-in-telegram)) | No |
-| `DUFFEL_API_KEY` | Duffel test-mode token; primary flight provider | No |
+| `DUFFEL_API_KEY` | Duffel `duffel_test_` token: sandbox test bookings after PayPal funding (a live key is refused) | No |
 | `RAPIDAPI_KEY` | RapidAPI key for Sky Scrapper backup flight search | No |
 | `AVIATIONSTACK_API_KEY` | Aviationstack free-tier key for route/schedule backup | No |
-| `KERNEL_API_KEY` | Optional Kernel browser key for the last-resort browser search | No |
-| `KERNEL_API_URL` | Optional Kernel browser endpoint; defaults to `https://api.onkernel.com/v1/browser/sessions` | No |
-| `ENABLE_KERNEL_FALLBACK` | Set to `true` to opt into browser fallback after all APIs fail | No |
+| `KERNEL_API_KEY` | Kernel API key: live Google Flights prices in a Kernel stealth cloud browser | No |
+| `KERNEL_API_URL` | Optional Kernel API base URL for `@onkernel/sdk` (default `https://api.onkernel.com/`) | No |
+| `ENABLE_KERNEL_FALLBACK` | Set to `true` to turn on Kernel live prices (needs `KERNEL_API_KEY`) | No |
 | `NEXT_PUBLIC_APP_URL` | **Public app URL** for escrow links and payment redirects. Use your production URL (e.g. `https://clearsend.vercel.app`) in production. Never use `localhost` in deployed environments. Falls back to `VERCEL_PROJECT_PRODUCTION_URL` if not set. | **Recommended** |
 | `UPSTASH_REDIS_REST_URL` | Upstash Redis REST URL for escrow storage | **Yes** (for escrow) |
 | `UPSTASH_REDIS_REST_TOKEN` | Upstash Redis REST token | **Yes** (for escrow) |
@@ -352,34 +353,41 @@ Escrow records are persisted server-side in Upstash Redis (via env `UPSTASH_REDI
 
 ClearSend tries providers in this order and returns the first non-empty result:
 
-1. **RapidAPI Sky Scrapper** via `RAPIDAPI_KEY` - Real-time pricing with retry logic and caching
-2. **Duffel** test mode via `DUFFEL_API_KEY` - Test/sample flight data
-3. **Aviationstack** via `AVIATIONSTACK_API_KEY` - Live flight status (schedule only, no pricing)
-4. **OpenSky Network** (free, anonymous) - Real recent/live departures and arrivals per airport (schedule only, no pricing)
-5. **OpenFlights** database (free, GitHub-hosted) - Route database to confirm which airlines fly a route (schedule only, no pricing)
-6. Optional **Kernel browser** fallback, only when `ENABLE_KERNEL_FALLBACK=true` and `KERNEL_API_KEY` is configured
+1. **RapidAPI Sky Scrapper** via `RAPIDAPI_KEY`: real-time pricing (needs an active RapidAPI plan with quota)
+2. **Kernel + Google Flights** via `KERNEL_API_KEY` and `ENABLE_KERNEL_FALLBACK=true`: live market prices (see below)
+3. **Duffel** test mode via `DUFFEL_API_KEY`: sample "Duffel Airways" data, used only if nothing better is found
+4. **Aviationstack** via `AVIATIONSTACK_API_KEY`: schedule only, no pricing
+5. **OpenSky Network** (free, anonymous): schedule only, no pricing
+6. **OpenFlights** database (free, GitHub-hosted): routes only, no pricing
+
+### Kernel: live Google Flights prices, test booking via Duffel sandbox
+
+What ships (`lib/kernel-flights.ts`, `lib/duffel-booking.ts`, `lib/trip-booking.ts`):
+
+1. **Search.** `POST /api/flights/search` (`origin`, `destination`, `date`, optional `passengers`) starts a Kernel **stealth** cloud browser (`@onkernel/sdk`), connects with Playwright `connectOverCDP`, opens the Google Flights results page for that one-way route/date/passengers in USD, and reads the result rows' accessible labels (airline, price, stops, times, duration). If the rows can't be read, a free OpenRouter model may parse the visible page text, and any price not present verbatim in that text is dropped. The whole browser step has a **45 s timeout**; the browser session is **always deleted**, even on errors. Results are cached in Upstash for **15 minutes** per route/date/passengers. The session id, live-view URL and, when the Kernel plan supports it, the **replay URL** are kept as evidence on the fare and the trip. A captcha or "unusual traffic" page is reported as a provider error with Google's text; ClearSend never invents a fare.
+2. **Honest labels.** Kernel fares are shown as **"Live market price (Google Flights)"**. ClearSend does not buy that ticket.
+3. **Fund.** Picking a fare creates a trip; the traveller enters passenger details and confirms, and `POST /api/trips/:id/book` creates a PayPal **sandbox** order with `custom_id` `trip:<id>` (fare + 3% service fee). Only the browser that created the trip (`cs_uid` cookie) or the service key can pay.
+4. **Capture + book.** After PayPal approval the payer types `CAPTURE` on `/paypal/return`; `PUT /api/trips/:id/book` checks the order's `custom_id`, amount and currency, binds the order to that trip, captures once under a per-trip lock, and takes a one-way settlement claim (book **or** refund, never both). It then makes a **"Test booking via Duffel sandbox"**: Duffel's test mode only sells sample "Duffel Airways" flights, so ClearSend requests Duffel offers for the same route/date and books the test offer closest in price, with the passenger's details. A non-`duffel_test_` key is refused. The Duffel order id and booking reference are attached to the trip and its receipt.
+5. **Auto-refund.** If the Duffel test booking fails, the PayPal capture is refunded in full automatically (idempotent `PayPal-Request-Id`, `amount.currency_code`) and the trip shows why. If that refund also fails the trip is marked failed, never confirmed.
+6. **Trip page.** `/trips/:id` shows search → pick → fund → booking reference → receipt, with links to Google Flights and the Kernel replay.
+
+Without `KERNEL_API_KEY` (or with `ENABLE_KERNEL_FALLBACK` not `true`) the Kernel source reports a clear provider error in the search's source list and the chain continues.
 
 ### Honest pricing policy
 
 **ClearSend NEVER fabricates prices.** Flight offers are clearly labeled:
 
-- **Priced offers** from RapidAPI or Duffel show real fares and can be booked with PayPal
+- **Priced offers** from Kernel (Google Flights), RapidAPI or Duffel (test) show real fares and can be paid for with PayPal sandbox. Bookings are always test bookings via the Duffel sandbox; no real ticket is issued.
 - **Schedule-only offers** from Aviationstack, OpenSky, or OpenFlights show `price: null` and are labeled "schedule only - fare unavailable"
-- The agent honestly explains when a fare is unavailable and offers to get a priced quote via RapidAPI/Duffel when available
-- **Booking/payment requires a priced offer** - the agent will not attempt PayPal checkout for schedule-only flights and explains it can't charge without a real fare
-
-The agent accepts IATA codes or city names and returns airline, price (if available), times, stops, and duration. Provider errors are logged and the next provider is tried. If all providers fail, ClearSend returns a clear error instead of inventing an offer.
+- **Booking/payment requires a priced offer**; schedule-only flights cannot be paid for.
 
 ### Free provider keys
 
-- **RapidAPI:** create a free account at [rapidapi.com](https://rapidapi.com), subscribe to the Sky Scrapper / Air Scraper BASIC plan, and copy `RAPIDAPI_KEY`. **Real-time pricing with retry logic and caching.**
-- **Duffel:** create a test account at [duffel.com](https://duffel.com), then copy a `duffel_test_` token from the dashboard. **Test/sample data only.**
-- **Aviationstack:** create a free account at [aviationstack.com](https://aviationstack.com) and copy the access key. **Live flight status, schedule only, no pricing.**
-- **OpenSky Network:** **Free, no signup required.** Anonymous access to real recent/live flight data. Optional: set `OPENSKY_USERNAME` and `OPENSKY_PASSWORD` for higher rate limits. **Schedule only, no pricing.**
-- **OpenFlights:** **Free, no signup required.** Route database from [github.com/jpatokal/openflights](https://github.com/jpatokal/openflights) fetched and cached server-side. **Schedule only, no pricing.**
-- **Kernel:** create an account at [onkernel.com](https://onkernel.com), copy the API key, and explicitly enable the fallback flag. Browser search is never the default.
-
-**Important:** Only RapidAPI and Duffel provide pricing. All other providers return schedule-only data with `price: null` and are labeled "schedule only - fare unavailable". The agent will not attempt PayPal checkout for schedule-only flights.
+- **Kernel:** sign up at [kernel.sh](https://www.kernel.sh) (free tier includes monthly credits), create an API key, set `KERNEL_API_KEY` and `ENABLE_KERNEL_FALLBACK=true`.
+- **RapidAPI:** create a free account at [rapidapi.com](https://rapidapi.com), subscribe to the Sky Scrapper plan, and copy `RAPIDAPI_KEY`.
+- **Duffel:** create a test account at [duffel.com](https://duffel.com), then copy a `duffel_test_` token. **Test/sample data and test bookings only.**
+- **Aviationstack:** free key at [aviationstack.com](https://aviationstack.com). **Schedule only.**
+- **OpenSky Network / OpenFlights:** free, no signup. **Schedule only.**
 
 For a complete conversation, ask ClearSend to calculate a transfer and find a flight in one request. It will show both results, a combined total, and separate approval controls before any PayPal action.
 
