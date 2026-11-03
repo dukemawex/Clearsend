@@ -80,6 +80,27 @@ Open http://localhost:3000 and try a golden prompt. The agent should:
 
 ---
 
+## The Room flow (one workflow for everyone)
+
+ClearSend's home page (`/`) is the **Room**: a live activity feed, a 9-step workflow stepper with live counts, and the latest trips and escrows. The agent chat (voice + document upload) moved to **`/agent`**.
+
+| # | Step | Where | Who |
+|---|------|-------|-----|
+| 1 | Search flights | `/plan`, `/agent`, MCP | anyone |
+| 2 | Choose | agent asks "Which flight would you like?" | payer |
+| 3 | Confirm | traveller details, price breakdown, typed "yes, book it" | payer |
+| 4 | Pay with PayPal | PayPal sandbox approve, then `/paypal/return` and type `CAPTURE` | payer |
+| 5 | Escrow funded | `/escrow/new` (live FX quote) then payer role view, type the amount to fund | payer |
+| 6 | Deliverable submitted | recipient role view, Telegram or Discord | recipient |
+| 7 | AI verified | free model checks each criterion | agent + verifier |
+| 8 | Human release | payer types the exact amount (web) or presses a button and types it (bots) | payer |
+| 9 | Paid out | PayPal Payout to any supported country | PayPal |
+
+- **Activity log:** `lib/activity.ts` writes real entries to Upstash (`cs-activity:*`) on every escrow and trip state change, flight search, and Telegram/Discord bot action. `GET /api/activity?kind=&subject=&q=` is public without raw payloads; `POST` (agent status) and `DELETE ?id=|?subject=` (test cleanup) need `x-clearsend-api-key`. Empty states are honest; nothing is seeded.
+- **PayPal return/cancel:** orders return to `/paypal/return?kind=escrow|trip|order&id=…` and `/paypal/cancel`. These URLs never carry a role or trip token. Role links are kept only on the payer's device.
+- **Prices:** `/plan` books only live Sky-Scrapper or Duffel (test) fares. Open-data results are labelled "fare unavailable" and cannot be booked.
+- **Theme:** ClearSend white and blue by default, optional dark mode for Room pages (toggle in the nav), mobile menu below 1024px.
+
 ## Voice and document upload
 
 - **Voice (browser-only, free):** hold 🎙 in the agent chat to dictate with the Web Speech API `SpeechRecognition`; the live transcript shows before you send. Toggle **🔊 Speak replies** to hear answers via `speechSynthesis`, with a stop button. Language selector covers en-NG, en-US, en-GB, fr-FR, es-ES, pt-BR, yo-NG, ha-NG, sw-KE (support varies by browser). Unsupported browsers (e.g. Firefox) show a fallback message; typing always works.

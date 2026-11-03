@@ -54,3 +54,31 @@ button, textarea { font: inherit; } button { -webkit-tap-highlight-color: transp
 .tool-button.mic.on { background: #ef4444; border-color: #ef4444; color: white; box-shadow: 0 0 0 6px rgba(239,68,68,.18); }
 .doc-upload-button { border: 1px solid #bfdbfe; background: #0070ba; color: white; border-radius: 999px; padding: 8px 14px; font-size: 13px; cursor: pointer; white-space: nowrap; }
 .doc-upload-button:disabled { opacity: .6; }
+
+/* ---------- Room flow (ported from ClearSend Room, in ClearSend white/blue brand) ---------- */
+.cs-room { --bg: #f6f9fc; --bg-2: #ffffff; --fg: #071633; --mut: #64748b; --line: #e2e8f0; --card: #ffffff; --accent: #0070ba; --accent-2: #009cde; --navy: #003087; --tint: #eff8ff; --ok: #0b815a; --warn: #9a5c00; --bad: #b42318; color: var(--fg); background: radial-gradient(circle at 82% -10%, #dff4ff 0, transparent 34%), var(--bg); min-height: calc(100vh - 72px); }
+[data-theme="dark"] .cs-room { --bg: #071633; --bg-2: #0b1f45; --fg: #eef5ff; --mut: #9fb3d1; --line: #1d3563; --card: #0b1f45; --tint: #0f2c5c; --accent: #3aa0ff; --accent-2: #33c3ff; --ok: #34d399; --warn: #fbbf24; --bad: #f87171; background: var(--bg); }
+.cs-card { background: var(--card); border: 1px solid var(--line); border-radius: 18px; box-shadow: 0 12px 30px rgba(15,42,75,.07); }
+.cs-tint { background: var(--tint); }
+.text-mut { color: var(--mut); } .border-line { border-color: var(--line); }
+.c-ok { color: var(--ok); } .c-warn { color: var(--warn); } .c-bad { color: var(--bad); } .c-acc { color: var(--accent); }
+.bg-ok { background: color-mix(in srgb, var(--ok) 12%, transparent); } .bg-warn { background: color-mix(in srgb, var(--warn) 12%, transparent); }
+.bg-bad { background: color-mix(in srgb, var(--bad) 12%, transparent); } .bg-acc { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.btn-primary { background: var(--accent); color: #fff; } .btn-primary:hover { background: var(--navy); }
+.btn-paypal { background: #ffc439; color: #111; } .btn-paypal:hover { filter: brightness(.96); }
+.btn-ghost { background: var(--card); border: 1px solid var(--line); color: var(--accent); } .btn-ghost:hover { background: var(--tint); }
+.cs-field { background: var(--bg-2); border: 1px solid var(--line); color: var(--fg); border-radius: 12px; padding: .6rem .8rem; width: 100%; font-size: 14px; }
+.cs-field:focus { outline: none; border-color: var(--accent-2); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-2) 25%, transparent); }
+.cs-skeleton { background: linear-gradient(90deg, var(--line) 0%, color-mix(in srgb, var(--line) 40%, transparent) 50%, var(--line) 100%); background-size: 200% 100%; animation: cs-shimmer 1.6s linear infinite; border-radius: 12px; }
+.cs-rise { animation: message-in .35s ease-out both; }
+.cs-active-step { box-shadow: 0 0 0 2px var(--accent-2); background: var(--tint); }
+@keyframes cs-shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+/* Global nav: sticky, with a mobile menu */
+.app-nav { position: sticky !important; }
+.app-shell .topbar { display: none; }
+.nav-toggle, .theme-toggle { border: 1px solid var(--slate-200); background: white; border-radius: 999px; width: 36px; height: 36px; cursor: pointer; color: var(--paypal-navy); }
+.nav-toggle { display: none; }
+.mobile-nav { display: none; }
+@media (max-width: 1023px) { .nav-links { display: none; } .nav-toggle { display: inline-grid; place-items: center; } .mobile-nav.open { display: grid; gap: 4px; position: sticky; top: 72px; z-index: 49; background: white; border-bottom: 1px solid var(--slate-200); padding: 10px 16px; } }
+@media (min-width: 1024px) { .nav-label { display: inline; } .nav-link { padding: 10px 10px; font-size: 13px; } .nav-icon { font-size: 15px; } }
+@media (prefers-reduced-motion: reduce) { .cs-skeleton, .cs-rise { animation: none; } }

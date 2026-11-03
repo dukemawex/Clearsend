@@ -23,7 +23,7 @@ export default async function TripsPage() {
             </p>
           </div>
           <Link
-            href="/"
+            href="/agent"
             className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
           >
             New Booking
@@ -38,7 +38,7 @@ export default async function TripsPage() {
               Start planning your journey with ClearSend
             </p>
             <Link
-              href="/"
+              href="/agent"
               className="inline-block px-6 py-3 bg-blue-600 text-white rounded-md hover:bg-blue-700"
             >
               Search Flights

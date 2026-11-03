@@ -3,7 +3,6 @@
 import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { AppNav } from "@/components/AppNav";
 
 const DESTINATIONS = [
   { name: "Nigeria", code: "NG", currency: "NGN", flag: "🇳🇬" },
@@ -55,8 +54,7 @@ export default function SendMoneyPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <AppNav />
-      <div className="p-8 pt-24">
+      <div className="p-8 pt-8">
         <div className="max-w-2xl mx-auto">
           <div className="mb-8">
             <h1 className="text-3xl font-bold mb-2">Send Money</h1>

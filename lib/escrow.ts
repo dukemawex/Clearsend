@@ -1,3 +1,4 @@
+import { recordActivity } from "./activity";
 import { z } from "zod";
 
 export const EscrowState = z.enum(["created", "funded", "submitted", "verified", "rejected", "released", "refunded"]);
@@ -171,6 +172,7 @@ export async function createEscrow(input: {
   await getStorage().set(`escrow:${id}`, JSON.stringify(escrow));
   console.info("escrow_created", { id, amount: input.amount, currency: input.currency });
   
+  await recordActivity({ kind: "escrow", subject: escrow.id, actor: escrow.payer, summary: `Escrow created: ${escrow.amount} ${escrow.currency} from ${escrow.payer} to ${escrow.recipient} (${escrow.recipientCountry}).` });
   return escrow;
 }
 
@@ -219,6 +221,19 @@ async function updateEscrow(id: string, updates: Partial<EscrowRecord>, newState
   
   await getStorage().set(`escrow:${id}`, JSON.stringify(updated));
   console.info("escrow_updated", { id, state: updated.state });
+  if (newState && newState !== escrow.state) {
+    const msg: Record<string, string> = {
+      funded: `Escrow funded: ${updated.amount} ${updated.currency} captured by PayPal (order ${updated.orderId ?? "?"}).`,
+      submitted: `Deliverable submitted by ${updated.recipient}.`,
+      verified: `AI verifier: deliverable meets the specification. Waiting for a human to release.`,
+      rejected: `AI verifier: deliverable does not meet the specification.`,
+      released: `Released ${updated.amount} ${updated.currency} to ${updated.recipient} via PayPal Payout (batch ${updated.payoutBatchId ?? "?"}).`,
+      refunded: `Refunded ${updated.amount} ${updated.currency} to ${updated.payer} via PayPal.`,
+    };
+    await recordActivity({ kind: newState === "verified" || newState === "rejected" ? "decision" : ["funded", "released", "refunded"].includes(newState) ? "paypal" : "escrow", subject: id, actor: newState === "verified" || newState === "rejected" ? "agent" : "ClearSend", summary: msg[newState] ?? `Escrow is now ${newState}.`, data: { state: newState } });
+  } else if (updates.documents) {
+    await recordActivity({ kind: "escrow", subject: id, actor: "ClearSend", summary: `Document attached: ${updates.documents.at(-1)?.name ?? "file"}.` });
+  }
   
   return updated;
 }

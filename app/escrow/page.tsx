@@ -44,7 +44,7 @@ export default async function EscrowDashboardPage() {
               Create an escrow to securely hold funds until work is complete
             </p>
             <Link
-              href="/"
+              href="/agent"
               className="inline-block px-6 py-3 bg-blue-600 text-white rounded-md hover:bg-blue-700"
             >
               Start with ClearSend Agent

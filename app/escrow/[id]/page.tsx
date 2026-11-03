@@ -8,6 +8,8 @@ import { Button } from "@/components/ui/button";
 import type { EscrowRecord } from "@/lib/escrow";
 import type { EscrowRole } from "@/lib/escrow-links";
 import { EscrowDocuments } from "@/components/EscrowDocuments";
+import { Stepper } from "@/components/room/Stepper";
+import { escrowStep } from "@/lib/workflow";
 
 export default function EscrowPage() {
   const params = useParams();
@@ -90,7 +92,9 @@ export default function EscrowPage() {
   };
 
   const handleRelease = async () => {
-    if (!confirm("Release funds to recipient? This action cannot be undone.")) {
+    const typedRelease = prompt(`Type the exact amount to release (${escrow?.amount.toFixed(2)} ${escrow?.currency}) to pay ${escrow?.recipient} via PayPal Payout. This cannot be undone.`);
+    if (!escrow || typedRelease?.trim() !== `${escrow.amount.toFixed(2)} ${escrow.currency}`) {
+      if (typedRelease !== null) alert("That did not match. Nothing was released.");
       return;
     }
 
@@ -113,8 +117,27 @@ export default function EscrowPage() {
     }
   };
 
+  const handleFund = async () => {
+    if (!escrow) return;
+    const want = `${escrow.amount.toFixed(2)} ${escrow.currency}`;
+    const typed = prompt(`Type ${want} to create a PayPal sandbox order and fund this escrow.`);
+    if (typed?.trim() !== want) { if (typed !== null) alert("That did not match. No order was created."); return; }
+    setIsSubmitting(true);
+    try {
+      const res = await fetch(`/api/escrow/fund`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ escrowId: id }) });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok || !j.approveUrl) throw new Error(j.error || "PayPal returned no approval link");
+      window.location.href = j.approveUrl;
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Failed to start PayPal funding");
+      setIsSubmitting(false);
+    }
+  };
+
   const handleRefund = async () => {
-    if (!confirm("Refund this escrow? This action cannot be undone.")) {
+    const typedRefund = prompt(`Type REFUND to return ${escrow?.amount.toFixed(2)} ${escrow?.currency} to the payer via PayPal. This cannot be undone.`);
+    if (typedRefund?.trim() !== "REFUND") {
+      if (typedRefund !== null) alert("That did not match. Nothing was refunded.");
       return;
     }
 
@@ -190,6 +213,7 @@ export default function EscrowPage() {
   return (
     <div className="min-h-screen p-8 bg-gray-50">
       <div className="max-w-4xl mx-auto">
+        <div className="mb-6"><Stepper current={escrowStep(escrow.state)} skip={[0, 1, 2]} compact /></div>
         {/* Header */}
         <div className="mb-8">
           <div className="flex items-start justify-between mb-4">
@@ -395,6 +419,11 @@ export default function EscrowPage() {
               </Button>
             )}
 
+            {role === "payer" && escrow.state === "created" && (
+              <Button onClick={handleFund} disabled={isSubmitting} className="w-full">
+                Fund {escrow.amount.toFixed(2)} {escrow.currency} with PayPal (sandbox)
+              </Button>
+            )}
             {role === "payer" && escrow.state === "verified" && (
               <Button 
                 onClick={handleRelease} 
