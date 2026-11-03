@@ -11,6 +11,7 @@ import { EscrowDocuments } from "@/components/EscrowDocuments";
 import { Stepper } from "@/components/room/Stepper";
 import { escrowStep } from "@/lib/workflow";
 import { SandboxHelp } from "@/components/SandboxHelp";
+import { PayoutInfo } from "@/components/PayoutInfo";
 import { SpecView } from "@/components/SpecReview";
 
 export default function EscrowPage() {
@@ -306,6 +307,7 @@ export default function EscrowPage() {
           </CardContent>
         </Card>
 
+        <PayoutInfo escrow={escrow} />
         {/* Specification */}
         <Card className="mb-6">
           <CardHeader>

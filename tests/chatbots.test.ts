@@ -52,7 +52,7 @@ test("guided create, invite join, role mapping and guards (memory store, no PayP
   const stranger = { ...payer, userId: "3", userName: "@x" };
   let r = await core.startCreate(payer, "150 USD to Ada <ada@example.com> for 3 logo concepts as PNG");
   assert.match(r.text, /country/i);
-  r = await core.answerDraft(payer, "NG");
+  r = await core.answerDraft(payer, "KE");
   assert.match(r.text, /PayPal email/i);
   r = await core.answerDraft(payer, "not-an-email");
   assert.match(r.text, /doesn't look like an email/);
@@ -85,4 +85,12 @@ test("telegram route: 401 without secret", async () => {
   assert.equal(res.status, 401);
   const noTok = await POST(new Request("http://x/api/telegram/webhook", { method: "POST", body: JSON.stringify({ update_id: 1 }), headers: { "x-telegram-bot-api-secret-token": "s3cret_value" } }));
   assert.equal(noTok.status, 200);
+});
+
+test("telegram country step rejects NG with a clear payout error", async () => {
+  const core = await import("../lib/chatbots/core");
+  const u = { platform: "telegram" as const, userId: "tg-ng-test", chatId: "tg-ng-test", name: "TEST" };
+  let r = await core.startCreate(u, "20 USD to Ada <ada@example.com> for one logo");
+  for (let i = 0; i < 6 && !/country/i.test(r.text); i++) r = await core.answerDraft(u, "payer@example.com");
+  if (/country/i.test(r.text)) { r = await core.answerDraft(u, "NG"); assert.match(r.text, /doesn't list NG/); }
 });

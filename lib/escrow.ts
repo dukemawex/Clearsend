@@ -1,6 +1,7 @@
 import { recordActivity } from "./activity";
 import { z } from "zod";
 import { StructuredSpec } from "./spec";
+import { checkPayoutEligibility, validateRecipientId, type RecipientType } from "./payout-countries";
 import { Receipt, buildReceipt, fxAtEvent, type ReceiptKind } from "./receipts";
 
 export const EscrowState = z.enum(["created", "funded", "submitted", "verified", "rejected", "released", "refunded"]);
@@ -14,6 +15,10 @@ export const EscrowRecord = z.object({
   recipient: z.string(),
   recipientEmail: z.string().email().optional(),
   recipientPayerId: z.string().optional(),
+  recipientPhone: z.string().optional(),
+  recipientType: z.enum(["EMAIL", "PHONE", "PAYPAL_ID"]).optional(),
+  receiveCurrency: z.string().length(3).optional(),
+  payoutStatus: z.string().optional(),
   recipientCountry: z.string(),
   amount: z.number().positive(),
   currency: z.string().length(3),
@@ -148,6 +153,9 @@ export async function createEscrow(input: {
   recipient: string;
   recipientEmail?: string;
   recipientPayerId?: string;
+  recipientPhone?: string;
+  recipientType?: RecipientType;
+  receiveCurrency?: string;
   recipientCountry: string;
   amount: number;
   currency: string;
@@ -156,6 +164,12 @@ export async function createEscrow(input: {
   structuredSpec?: StructuredSpec;
   specDocument?: { name: string; kind: string; size: number; text: string; truncated: boolean; method: string; note?: string; uploadedAt: number };
 }): Promise<EscrowRecord> {
+  const type: RecipientType = input.recipientType ?? (input.recipientEmail ? "EMAIL" : input.recipientPhone ? "PHONE" : input.recipientPayerId ? "PAYPAL_ID" : "EMAIL");
+  const rid = type === "EMAIL" ? input.recipientEmail : type === "PHONE" ? input.recipientPhone : input.recipientPayerId;
+  if (rid) { const bad = validateRecipientId(type, rid); if (bad) throw new EscrowError(bad, "INVALID_RECIPIENT"); }
+  const country = input.recipientCountry.trim().toUpperCase();
+  const elig = checkPayoutEligibility(country, input.currency);
+  if (!elig.ok) throw new EscrowError(elig.error, "PAYOUT_UNSUPPORTED");
   const id = `escrow_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
   const now = Date.now();
   
@@ -167,7 +181,10 @@ export async function createEscrow(input: {
     recipient: input.recipient,
     recipientEmail: input.recipientEmail,
     recipientPayerId: input.recipientPayerId,
-    recipientCountry: input.recipientCountry,
+    recipientPhone: input.recipientPhone,
+    recipientType: type,
+    receiveCurrency: input.receiveCurrency?.toUpperCase(),
+    recipientCountry: country,
     amount: input.amount,
     currency: input.currency,
     specification: input.specification,
@@ -279,7 +296,7 @@ export async function releaseEscrow(id: string, payoutBatchId: string, payoutIte
   if (escrow.state !== "verified") throw new EscrowError(`Escrow ${id} is ${escrow.state}, expected 'verified'`, "INVALID_STATE");
   
   const receipt = await escrowReceipt({ ...escrow, payoutBatchId, payoutItemId }, "payout", status ?? "PENDING");
-  return updateEscrow(id, { payoutBatchId, payoutItemId, receipts: [...(escrow.receipts ?? []), receipt] }, "released");
+  return updateEscrow(id, { payoutBatchId, payoutItemId, payoutStatus: status ?? "PENDING", receipts: [...(escrow.receipts ?? []), receipt] }, "released");
 }
 
 export async function refundEscrow(id: string, refundId: string, status?: string): Promise<EscrowRecord> {
@@ -308,10 +325,19 @@ async function escrowReceipt(e: EscrowRecord, kind: ReceiptKind, status: string)
     kind, subjectType: "escrow", subjectId: e.id, issuedAt: Date.now(),
     payer: e.payer, payerEmail: e.payerEmail, recipient: e.recipient, recipientEmail: e.recipientEmail, recipientCountry: e.recipientCountry,
     description: e.specification, amount: e.amount, currency: e.currency,
-    fx: kind === "refund" ? null : await fxAtEvent(e.currency, e.recipientCountry),
+    fx: kind === "refund" ? null : await fxAtEvent(e.currency, e.recipientCountry, e.receiveCurrency),
     paypal: { orderId: e.orderId, captureId: e.captureId, payoutBatchId: kind === "payout" ? e.payoutBatchId : undefined, payoutItemId: kind === "payout" ? e.payoutItemId : undefined, refundId: kind === "refund" ? e.refundId : undefined },
     status,
   });
   await recordActivity({ kind: "paypal", subject: e.id, actor: "ClearSend", summary: `Receipt ${receipt.number} issued (${kind}, ${receipt.amount.toFixed(2)} ${receipt.currency}, ${status}).`, data: { receiptId: receipt.id } });
   return receipt;
 }
+
+/** PayPal receiver + recipient_type for this escrow's payout. */
+export function payoutReceiver(e: EscrowRecord): { receiver: string; recipientType: RecipientType } | null {
+  const t = e.recipientType ?? (e.recipientEmail ? "EMAIL" : e.recipientPhone ? "PHONE" : "PAYPAL_ID");
+  const r = t === "EMAIL" ? e.recipientEmail : t === "PHONE" ? e.recipientPhone : e.recipientPayerId;
+  return r ? { receiver: t === "PHONE" ? r.replace(/[\s()-]/g, "") : r, recipientType: t } : null;
+}
+
+export async function setPayoutStatus(id: string, payoutStatus: string) { return updateEscrow(id, { payoutStatus }); }

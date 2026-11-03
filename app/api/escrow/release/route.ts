@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { notifyReceipt } from "@/lib/chatbots/notify";
-import { releaseEscrow, getEscrow } from "@/lib/escrow";
+import { releaseEscrow, getEscrow , payoutReceiver } from "@/lib/escrow";
 import { verifyEscrowToken, type EscrowRole } from "@/lib/escrow-links";
 import { createPayout } from "@/lib/paypal";
 import { z } from "zod";
@@ -38,12 +38,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: `Escrow is ${escrow.state}, expected 'verified'` }, { status: 400 });
     }
     
-    if (!escrow.recipientEmail && !escrow.recipientPayerId) {
-      return NextResponse.json({ error: "No recipient email or PayPal ID configured" }, { status: 400 });
+    const rcv = payoutReceiver(escrow);
+    if (!rcv) {
+      return NextResponse.json({ error: "No recipient PayPal email, phone or PayPal ID configured" }, { status: 400 });
     }
     
     const payoutResult = await createPayout({
-      recipientEmail: escrow.recipientEmail || escrow.recipientPayerId!,
+      ...rcv,
       amount: escrow.amount,
       currency: escrow.currency,
       note: `ClearSend Escrow Release: ${escrow.specification.slice(0, 100)}`,

@@ -24,3 +24,13 @@ test("prompt-injection fixture is flagged and stripped from criteria (test fixtu
   assert.deepEqual(s.acceptanceCriteria, ["Page loads under 2s"]);
 });
 test("garbage reply throws (test fixture)", () => { assert.throws(() => parseSpecResponse("sorry I can't")); });
+
+import { checkPayoutEligibility, validateRecipientId } from "../lib/payout-countries";
+test("payout eligibility follows PayPal country list (test)", () => {
+  assert.equal(checkPayoutEligibility("KE", "USD").ok, true);
+  assert.equal(checkPayoutEligibility("NG", "USD").ok, false);
+  assert.equal(checkPayoutEligibility("GB", "NGN").ok, false);
+  assert.equal(checkPayoutEligibility("AR", "EUR").ok, false);
+  assert.equal(validateRecipientId("PHONE", "+254 712 345 678"), null);
+  assert.ok(validateRecipientId("PAYPAL_ID", "abc"));
+});

@@ -34,9 +34,9 @@ export async function getPayPalAccessToken() {
   return body.access_token as string;
 }
 
-export async function createPayout(input: { recipientEmail: string; amount: number; currency: string; note?: string }) {
+export async function createPayout(input: { recipientEmail?: string; receiver?: string; recipientType?: "EMAIL" | "PHONE" | "PAYPAL_ID"; amount: number; currency: string; note?: string }) {
   const token = await getPayPalAccessToken();
-  return paypalFetch("/v1/payments/payouts", { method: "POST", body: JSON.stringify({ sender_batch_header: { sender_batch_id: `clearsend-${Date.now()}`, email_subject: "You have a ClearSend payment", email_message: input.note ?? "A ClearSend remittance has arrived." }, items: [{ recipient_type: "EMAIL", amount: { value: input.amount.toFixed(2), currency: input.currency }, receiver: input.recipientEmail, note: input.note }] }) }, token);
+  return paypalFetch("/v1/payments/payouts", { method: "POST", body: JSON.stringify({ sender_batch_header: { sender_batch_id: `clearsend-${Date.now()}`, email_subject: "You have a ClearSend payment", email_message: input.note ?? "A ClearSend remittance has arrived." }, items: [{ recipient_type: input.recipientType ?? "EMAIL", amount: { value: input.amount.toFixed(2), currency: input.currency }, receiver: input.receiver ?? input.recipientEmail, note: input.note }] }) }, token);
 }
 
 export async function getPayoutStatus(batchId: string) { return paypalFetch(`/v1/payments/payouts/${encodeURIComponent(batchId)}`, {}, await getPayPalAccessToken()); }

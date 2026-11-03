@@ -43,6 +43,7 @@ export function ReceiptView({ r }: { r: Receipt }) {
         {r.paypal.refundId && <Row k="PayPal refund ID" v={<span className="font-mono">{r.paypal.refundId}</span>} />}
       </dl>
       <footer className="mt-6 border-t border-line pt-4 text-xs text-mut">
+        {r.kind === "payout" ? <p>Paid in {r.currency} to the recipient&apos;s PayPal account{r.recipientCountry ? ` (${r.recipientCountry})` : ""}. They withdraw to their local bank from PayPal; PayPal applies its own conversion. Unclaimed payouts are returned to the sender after 30 days.</p> : null}
         {r.fx ? <p>FX figures are a live quote ({r.fx.source}) taken when this event happened; the PayPal transaction itself is in {r.currency}. </p> : null}
         <p>Issued by ClearSend from PayPal sandbox responses stored at event time. Receipt ID {r.id}.</p>
       </footer>
