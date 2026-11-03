@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { AppNav } from "@/components/AppNav";
 import type { TripRecord } from "@/lib/trips";
 import type { EscrowRecord } from "@/lib/escrow";
 
@@ -23,8 +22,7 @@ export default function DashboardPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <AppNav />
-      <div className="p-8 pt-24">
+      <div className="p-8 pt-8">
         <div className="max-w-6xl mx-auto">
           <div className="mb-8">
             <h1 className="text-3xl font-bold mb-2">Dashboard</h1>
@@ -39,7 +37,7 @@ export default function DashboardPage() {
                 <CardTitle className="text-base">Quick Actions</CardTitle>
               </CardHeader>
               <CardContent className="space-y-2">
-                <Link href="/" className="block p-3 bg-blue-50 rounded-md hover:bg-blue-100 transition-colors">
+                <Link href="/agent" className="block p-3 bg-blue-50 rounded-md hover:bg-blue-100 transition-colors">
                   <div className="flex items-center gap-2">
                     <span>💬</span>
                     <span className="font-medium">Chat with Agent</span>

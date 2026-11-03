@@ -9,6 +9,11 @@ import { extractDocument } from "@/lib/documents";
 import { evaluateEscrow } from "@/lib/verifier";
 import { del, getJSON, k, logActivity, setJSON, once } from "./store";
 import { confirmPhrase, isEmail, isEscrowId, isInviteCode, parseInlineEscrow, parseQuote, parseRoleLink, phraseMatches, quoteBreakdown, roleAllowed, type Role } from "./parse";
+import { recordActivity } from "@/lib/activity";
+
+function botLog(ctx: Pick<Ctx, "platform" | "userName" | "isGroup">, subject: string | undefined, summary: string) {
+  return recordActivity({ kind: "chat", subject: subject || `${ctx.platform}-chat`, actor: `${ctx.platform}:${ctx.userName}`, summary: `${summary} (${ctx.platform}${ctx.isGroup ? " group" : " DM"})` });
+}
 
 export type Platform = "telegram" | "discord";
 export type Ctx = { platform: Platform; chatId: string; userId: string; userName: string; isGroup: boolean };
@@ -179,6 +184,7 @@ async function finishCreate(ctx: Ctx, d: Required<Draft>): Promise<Reply> {
 
 // ---------- join ----------
 export async function join(ctx: Ctx, arg: string): Promise<Reply> {
+  await botLog(ctx, undefined, "joined an escrow with an invite code");
   let target: { escrowId: string; role: Role } | null = null;
   const link = parseRoleLink(arg);
   if (link) {
@@ -242,13 +248,14 @@ async function guard(ctx: Ctx, escrow: EscrowRecord, action: string): Promise<Re
 
 // ---------- fund ----------
 export async function fund(ctx: Ctx, idArg?: string): Promise<Reply> {
+  await botLog(ctx, idArg, "asked to fund the escrow with PayPal");
   const escrow = await resolveEscrow(ctx, idArg);
   if (!escrow) return noEscrow;
   const g = await guard(ctx, escrow, "fund"); if (g) return g;
   if (escrow.state !== "created") return { text: `Escrow is already ${escrow.state}.`, ephemeral: true };
   let order = await getJSON<{ orderId: string; approveUrl?: string }>(k("order", escrow.id));
   if (!order) {
-    const o = await createOrder({ amount: escrow.amount, currency: escrow.currency, description: `ClearSend Escrow ${escrow.id} - ${escrow.specification.slice(0, 100)}` });
+    const o = await createOrder({ amount: escrow.amount, currency: escrow.currency, returnTo: { kind: "escrow", id: escrow.id }, description: `ClearSend Escrow ${escrow.id} - ${escrow.specification.slice(0, 100)}` });
     const approveUrl = (o.links as Array<{ rel: string; href: string }> | undefined)?.find((l) => l.rel === "approve" || l.rel === "payer-action")?.href;
     order = { orderId: o.id as string, approveUrl };
     await setJSON(k("order", escrow.id), order, 3 * DAY);
@@ -268,6 +275,7 @@ export async function fund(ctx: Ctx, idArg?: string): Promise<Reply> {
 
 // ---------- submit ----------
 export async function submit(ctx: Ctx, idArg: string | undefined, text: string, doc?: IncomingDoc): Promise<Reply> {
+  await botLog(ctx, idArg, "submitted a deliverable in chat");
   const escrow = await resolveEscrow(ctx, idArg);
   if (!escrow) return noEscrow;
   const g = await guard(ctx, escrow, "submit"); if (g) return g;
@@ -287,6 +295,7 @@ export async function submit(ctx: Ctx, idArg: string | undefined, text: string, 
 
 // ---------- verify (long; callers defer) ----------
 export async function verify(ctx: Ctx, idArg?: string): Promise<Reply> {
+  await botLog(ctx, idArg, "asked the AI verifier to check the deliverable");
   const escrow = await resolveEscrow(ctx, idArg);
   if (!escrow) return noEscrow;
   const g = await guard(ctx, escrow, "verify"); if (g) return g;
@@ -306,6 +315,7 @@ export async function verify(ctx: Ctx, idArg?: string): Promise<Reply> {
 
 // ---------- release / refund: button + typed words ----------
 export async function requestRelease(ctx: Ctx, idArg?: string): Promise<Reply> {
+  await botLog(ctx, idArg, "requested release (button + typed amount required)");
   const escrow = await resolveEscrow(ctx, idArg);
   if (!escrow) return noEscrow;
   const g = await guard(ctx, escrow, "release"); if (g) return g;
@@ -316,6 +326,7 @@ export async function requestRelease(ctx: Ctx, idArg?: string): Promise<Reply> {
   return { text: `Release ${money(escrow.amount, escrow.currency)} to ${escrow.recipient} via PayPal Payouts (sandbox)? Press confirm, then type exactly: ${phrase}`, buttons: [{ label: "Confirm release", id: `c:${nonce}`, style: "danger" }] };
 }
 export async function requestRefund(ctx: Ctx, idArg?: string): Promise<Reply> {
+  await botLog(ctx, idArg, "requested a refund (button + typed amount required)");
   const escrow = await resolveEscrow(ctx, idArg);
   if (!escrow) return noEscrow;
   const g = await guard(ctx, escrow, "refund"); if (g) return g;
@@ -356,6 +367,7 @@ export async function submitPhrase(ctx: Ctx, nonce: string, typed: string): Prom
 }
 
 async function execute(ctx: Ctx, nonce: string, p: Pending): Promise<Reply> {
+  await recordActivity({ kind: "confirmation", subject: p.escrowId, actor: `${ctx.platform}:${ctx.userName}`, summary: `Confirmed ${p.action} in ${ctx.platform}${p.phrase ? " by typing the exact phrase" : " with a button"}.` });
   if (!(await once(k("done", nonce), DAY))) return { text: "Already handled.", ephemeral: true };
   await del(k("confirm", nonce));
   const escrow = await getEscrow(p.escrowId);

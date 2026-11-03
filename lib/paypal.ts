@@ -41,8 +41,17 @@ export async function createPayout(input: { recipientEmail: string; amount: numb
 
 export async function getPayoutStatus(batchId: string) { return paypalFetch(`/v1/payments/payouts/${encodeURIComponent(batchId)}`, {}, await getPayPalAccessToken()); }
 
-export async function createOrder(input: { amount: number; currency?: string; description: string }) {
-  return paypalFetch("/v2/checkout/orders", { method: "POST", body: JSON.stringify({ intent: "CAPTURE", purchase_units: [{ description: input.description, amount: { currency_code: input.currency ?? "USD", value: input.amount.toFixed(2) } }], application_context: { brand_name: "ClearSend", user_action: "PAY_NOW", return_url: `${process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000"}/?payment=success`, cancel_url: `${process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000"}/?payment=cancelled` } }) }, await getPayPalAccessToken());
+function appBase() {
+  const env = process.env.NEXT_PUBLIC_APP_URL;
+  if (env && !env.includes("localhost")) return env.replace(/\/$/, "");
+  if (process.env.VERCEL_PROJECT_PRODUCTION_URL) return `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`;
+  return env ?? "http://localhost:3000";
+}
+
+/** Return/cancel pages carry only the record kind and id, never a role or trip token. PayPal appends ?token=<orderId>&PayerID=. */
+export async function createOrder(input: { amount: number; currency?: string; description: string; returnTo?: { kind: "escrow" | "trip" | "order"; id?: string } }) {
+  const q = new URLSearchParams({ kind: input.returnTo?.kind ?? "order", ...(input.returnTo?.id ? { id: input.returnTo.id } : {}) }).toString();
+  return paypalFetch("/v2/checkout/orders", { method: "POST", body: JSON.stringify({ intent: "CAPTURE", purchase_units: [{ description: input.description, amount: { currency_code: input.currency ?? "USD", value: input.amount.toFixed(2) } }], application_context: { brand_name: "ClearSend", user_action: "PAY_NOW", return_url: `${appBase()}/paypal/return?${q}`, cancel_url: `${appBase()}/paypal/cancel?${q}` } }) }, await getPayPalAccessToken());
 }
 
 export async function captureOrder(orderId: string) { return paypalFetch(`/v2/checkout/orders/${encodeURIComponent(orderId)}/capture`, { method: "POST", body: "{}" }, await getPayPalAccessToken()); }

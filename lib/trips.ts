@@ -1,3 +1,4 @@
+import { recordActivity } from "./activity";
 import { z } from "zod";
 
 export const TripState = z.enum([
@@ -218,6 +219,7 @@ export async function createTrip(input: {
   
   await getStorage().set(`trip:${id}`, JSON.stringify(trip));
   console.info("trip_created", { id, origin: input.origin, destination: input.destination });
+  await recordActivity({ kind: "trip", subject: id, actor: "ClearSend", summary: `Chose ${input.airline} ${input.origin} → ${input.destination} on ${input.departureDate}: fare ${input.basePrice.toFixed(2)} ${input.currency} (${input.provider}).` });
   
   return trip;
 }
@@ -272,6 +274,9 @@ async function updateTrip(id: string, updates: Partial<TripRecord>, newState?: T
   
   await getStorage().set(`trip:${id}`, JSON.stringify(updated));
   console.info("trip_updated", { id, state: updated.state });
+  if (newState && newState !== trip.state) {
+    await recordActivity({ kind: newState === "payment_approved" || newState === "refunded" ? "paypal" : "trip", subject: id, actor: "ClearSend", summary: newState === "payment_approved" ? `PayPal captured ${updated.totalPrice.toFixed(2)} ${updated.currency} for ${updated.origin} → ${updated.destination}.` : `Trip ${updated.origin} → ${updated.destination} is now ${newState.replace(/_/g, " ")}.`, data: { state: newState } });
+  }
   
   return updated;
 }

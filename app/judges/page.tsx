@@ -220,6 +220,18 @@ export default function JudgesPage() {
       </section>
 
       <section style={{ marginBottom: "48px", padding: "24px", background: "#fef2f2", borderRadius: "8px", border: "1px solid #fecaca" }}>
+        <h2 style={{ fontSize: "24px", fontWeight: "600", marginBottom: "16px", color: "#003087" }}>🧭 The Room flow: 9 steps</h2>
+        <ol style={{ lineHeight: 1.8, marginBottom: "32px", paddingLeft: "20px", listStyle: "decimal" }}>
+          <li><b>Search flights</b> at <Link href="/plan" style={{ color: "#0070ba" }}>/plan</Link> or ask the <Link href="/agent" style={{ color: "#0070ba" }}>agent</Link>. Open-data results show “fare unavailable”.</li>
+          <li><b>Choose</b>: the agent asks which flight you want.</li>
+          <li><b>Confirm</b>: traveller details, price breakdown, then type “yes, book it”.</li>
+          <li><b>Pay with PayPal</b> (sandbox). PayPal returns you to /paypal/return, where you type CAPTURE.</li>
+          <li><b>Escrow funded</b>: <Link href="/escrow/new" style={{ color: "#0070ba" }}>/escrow/new</Link> shows a live FX quote and gives payer, recipient and verifier links; the payer types the amount to fund.</li>
+          <li><b>Deliverable submitted</b> by the recipient (web, Telegram or Discord, text or a document).</li>
+          <li><b>AI verified</b> criterion by criterion by a free model.</li>
+          <li><b>Human release</b>: the payer types the exact amount.</li>
+          <li><b>Paid out</b> by PayPal Payout. Watch each step land in <Link href="/activity" style={{ color: "#0070ba" }}>/activity</Link> and on the <Link href="/" style={{ color: "#0070ba" }}>Room</Link> home.</li>
+        </ol>
         <h2 style={{ fontSize: "24px", fontWeight: "600", marginBottom: "16px", color: "#991b1b" }}>🧪 Sandbox Test Walkthrough</h2>
         
         <div style={{ marginBottom: "24px" }}>
@@ -391,7 +403,7 @@ Returns:
           Built for the PayPal AI Hackathon • ClearSend by DukeMawex
         </p>
         <p style={{ fontSize: "14px" }}>
-          <Link href="/" style={{ color: "#3b82f6", textDecoration: "underline" }}>Try ClearSend</Link>
+          <Link href="/agent" style={{ color: "#3b82f6", textDecoration: "underline" }}>Try ClearSend</Link>
           {" • "}
           <a href="https://github.com/dukemawex/Clearsend" style={{ color: "#3b82f6", textDecoration: "underline" }}>View on GitHub</a>
         </p>

@@ -20,6 +20,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       amount: trip.totalPrice,
       currency: trip.currency,
       description: orderDescription,
+      returnTo: { kind: "trip", id: trip.id },
     });
 
     const links = paypalOrder.links as Array<{ rel: string; href: string }> | undefined;

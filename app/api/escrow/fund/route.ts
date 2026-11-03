@@ -23,6 +23,7 @@ export async function POST(request: NextRequest) {
       const order = await createOrder({
         amount: escrow.amount,
         currency: escrow.currency,
+        returnTo: { kind: "escrow", id: escrowId },
         description: `ClearSend Escrow ${escrowId} - ${escrow.specification.slice(0, 100)}`,
       });
       finalOrderId = order.id as string;
