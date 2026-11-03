@@ -5,7 +5,7 @@ import { useToast } from "@/components/room/Toaster";
 import { SandboxHelp } from "@/components/SandboxHelp";
 import { Badge, Card, cx, ErrorBox, Eyebrow, Money, PageHeader, Row, SandboxNote, Skeleton } from "@/components/room/ui";
 
-type Offer = { id: string; provider: string; airline: string; airlineCode?: string; route: string; origin: string; destination: string; depart: string; arrive: string; stops: number; duration?: string; price: number | null; currency: string; isCheapest?: boolean; scheduleOnly?: boolean; priceLabel?: string; evidence?: { replayUrl?: string; liveViewUrl?: string; searchUrl: string } };
+type Offer = { id: string; provider: string; airline: string; airlineCode?: string | null; route: string; origin: string; destination: string; depart: string; arrive: string; stops: number; duration?: string; price: number | null; currency: string; isCheapest?: boolean; scheduleOnly?: boolean; priceLabel?: string; evidence?: { replayUrl?: string; liveViewUrl?: string; searchUrl: string } };
 type Search = { provider: string | null; origin: string; destination: string; dateUsed: string | null; options: Offer[]; success: boolean; message?: string; note?: string; providers: { name: string; status: string; message?: string }[]; priced: number; evidence?: { replayUrl?: string; liveViewUrl?: string; searchUrl: string } };
 type Trip = { id: string; state: string; priceLabel?: string; provider?: string; basePrice: number; serviceFee: number; totalPrice: number; currency: string; airline: string; origin: string; destination: string; departureDate: string };
 const YES = /\b(yes|confirm|book it|go ahead|proceed|pay)\b/i;
@@ -43,7 +43,7 @@ export default function PlanTrip() {
     e.preventDefault(); if (!chosen || chosen.price == null) return;
     setLoading("trip"); setError(null);
     try {
-      const t = await call<Trip>("/api/trips/create", { method: "POST", body: JSON.stringify({ origin: chosen.origin, destination: chosen.destination, departureDate: chosen.depart.slice(0, 10) || search?.dateUsed, airline: chosen.airline, airlineCode: chosen.airlineCode, duration: chosen.duration, stops: chosen.stops, departureTime: chosen.depart, arrivalTime: chosen.arrive, basePrice: chosen.price, currency: chosen.currency, provider: chosen.provider, providerOfferId: chosen.id, kernelEvidence: chosen.evidence }) });
+      const t = await call<Trip>("/api/trips/create", { method: "POST", body: JSON.stringify({ origin: chosen.origin, destination: chosen.destination, departureDate: chosen.depart.slice(0, 10) || search?.dateUsed, airline: chosen.airline, airlineCode: chosen.airlineCode, duration: chosen.duration, stops: chosen.stops, departureTime: chosen.depart, arrivalTime: chosen.arrive, basePrice: chosen.price, currency: chosen.currency, provider: chosen.provider, providerOfferId: chosen.id, kernelEvidence: chosen.evidence }, (_k, v) => (v === null ? undefined : v)) });
       const withPax = await call<Trip>(`/api/trips/${t.id}/passenger`, { method: "POST", body: JSON.stringify(pax) });
       setTrip(withPax);
     } catch (e) { setError((e as Error).message); } finally { setLoading(""); }
