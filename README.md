@@ -111,7 +111,7 @@ ClearSend's home page (`/`) is the **Room**: a live activity feed, a 9-step work
 
 ## Paying in the PayPal sandbox (testers)
 
-ClearSend uses PayPal's **sandbox**, so the checkout only accepts sandbox test accounts or sandbox test cards. Real PayPal logins and real cards fail, and there is no public sign-up inside the sandbox. ClearSend shows a "Sandbox test payment" panel before redirecting, on the escrow funding step only (the app has no setup/help pages; this README is the setup guide), and the Telegram approval DM carries the same hint.
+ClearSend uses PayPal's **sandbox**, so the checkout only accepts sandbox test accounts or sandbox test cards. Real PayPal logins and real cards fail, and there is no public sign-up inside the sandbox. ClearSend shows a "Sandbox test payment" panel before redirecting, on the funding step only (escrow funding and trip payment; the app has no setup/help pages, this README is the setup guide), and the Telegram approval DM carries the same hint.
 
 - **Test buyer login:** set `SANDBOX_BUYER_EMAIL` and `SANDBOX_BUYER_PASSWORD` (a throwaway sandbox Personal account) in Vercel. They are shown with copy buttons only while `PAYPAL_ENV` is unset or `sandbox`.
 - **Create a sandbox buyer:** log in at <https://developer.paypal.com/dashboard/accounts>, click **Create account**, choose **Personal**, pick a country, then open the account's ⋮ menu → **View/Edit account** to read or set its email and password.
