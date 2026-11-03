@@ -1,15 +1,15 @@
 import { NextResponse } from "next/server";
 import { agentTools } from "@/lib/agent";
 import { recentActivity } from "@/lib/chatbots/store";
-import { discordInviteUrl } from "@/lib/chatbots/discord";
+import { loadReceipt } from "@/lib/receipt-access";
+import { getEscrow } from "@/lib/escrow";
+import { getTrip } from "@/lib/trips";
 
 function chatBotsInfo() {
   const base = process.env.NEXT_PUBLIC_APP_URL && !process.env.NEXT_PUBLIC_APP_URL.includes("localhost") ? process.env.NEXT_PUBLIC_APP_URL : process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : null;
   const tg = process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME;
-  const dc = process.env.NEXT_PUBLIC_DISCORD_APP_ID;
   return {
     telegram: { configured: !!(tg && process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_WEBHOOK_SECRET), addToGroup: tg ? `https://t.me/${tg}?startgroup=true` : null, webhook: base ? `${base}/api/telegram/webhook` : null },
-    discord: { configured: !!(dc && process.env.DISCORD_PUBLIC_KEY), addToServer: dc ? discordInviteUrl(dc) : null, interactionsEndpoint: base ? `${base}/api/discord/interactions` : null },
     setupPage: base ? `${base}/chat-bots` : "/chat-bots",
   };
 }
@@ -150,12 +150,17 @@ export async function POST(request: Request) {
         },
         {
           name: "chatBotsInfo",
-          description: "Read-only. Whether the Telegram and Discord escrow bots are configured, their add-to-chat links and webhook/interaction endpoint URLs.",
+          description: "Read-only. Whether the Telegram escrow bot is configured, its add-to-group link and webhook URL.",
           inputSchema: { type: "object", properties: {} }
         },
         {
+          name: "getReceipt",
+          description: "Read-only. Fetch a PayPal sandbox payment receipt by receipt id (rcpt_funding_|rcpt_payout_|rcpt_refund_ + escrow or trip id), or list all receipts for an escrowId/tripId. Receipts exist only after a real sandbox capture, payout or refund.",
+          inputSchema: { type: "object", properties: { id: { type: "string", description: "Receipt id" }, escrowId: { type: "string" }, tripId: { type: "string" } } }
+        },
+        {
           name: "listChatEscrowActivity",
-          description: "Read-only. Recent escrow actions taken from Telegram groups and Discord servers (create, join, fund, submit, verify, release, refund). No message content or secrets.",
+          description: "Read-only. Recent escrow actions taken from Telegram groups and DMs (create, join, fund, submit, verify, release, refund). No message content or secrets.",
           inputSchema: { type: "object", properties: { limit: { type: "number", description: "Max entries (1-100), default 25" } } }
         }
       ];
@@ -166,6 +171,18 @@ export async function POST(request: Request) {
     // MCP protocol: call tool
     if (method === "tools/call") {
       const { name, arguments: args } = params;
+
+      if (name === "getReceipt") {
+        let result: unknown;
+        if (args?.id) {
+          const r = await loadReceipt(String(args.id), { serviceKey: process.env.CLEAR_SEND_API_KEY ?? null });
+          result = r.status === 200 ? r.receipt : { error: r.error };
+        } else if (args?.escrowId || args?.tripId) {
+          const rec = args.escrowId ? await getEscrow(String(args.escrowId)) : await getTrip(String(args.tripId));
+          result = rec ? { receipts: rec.receipts ?? [] } : { error: "Not found" };
+        } else result = { error: "Provide id, escrowId or tripId" };
+        return NextResponse.json({ content: [{ type: "text", text: JSON.stringify(result, null, 2) }], _meta: { provider: "clearsend", sandbox: true } });
+      }
 
       if (name === "chatBotsInfo" || name === "listChatEscrowActivity") {
         const result = name === "chatBotsInfo" ? chatBotsInfo() : { activity: await recentActivity(Math.min(100, Math.max(1, Number(args?.limit) || 25))) };

@@ -1,31 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { generateKeyPairSync, sign } from "crypto";
-import { verifyDiscordSignature, verifyTelegramSecret } from "../lib/chatbots/security";
+import { verifyTelegramSecret } from "../lib/chatbots/security";
 import { confirmPhrase, parseCommand, parseInlineEscrow, parseQuote, parseRoleLink, phraseMatches, roleAllowed } from "../lib/chatbots/parse";
 
 delete process.env.UPSTASH_REDIS_REST_URL; delete process.env.UPSTASH_REDIS_REST_TOKEN; delete process.env.VERCEL_ENV;
 process.env.ESCROW_LINK_SECRET = "test-secret-for-unit-tests";
 
-function keypair() {
-  const { publicKey, privateKey } = generateKeyPairSync("ed25519");
-  const raw = publicKey.export({ format: "der", type: "spki" }).subarray(12).toString("hex");
-  return { hex: raw, privateKey };
-}
 
-test("discord signature: valid, tampered, wrong key, garbage", () => {
-  const kp = keypair();
-  const body = JSON.stringify({ type: 1 });
-  const ts = String(Math.floor(Date.now() / 1000));
-  const sig = sign(null, Buffer.from(ts + body), kp.privateKey).toString("hex");
-  assert.equal(verifyDiscordSignature(kp.hex, sig, ts, body), true);
-  assert.equal(verifyDiscordSignature(kp.hex, sig, ts, body + " "), false);
-  assert.equal(verifyDiscordSignature(kp.hex, sig, String(Number(ts) + 1), body), false);
-  assert.equal(verifyDiscordSignature(keypair().hex, sig, ts, body), false);
-  assert.equal(verifyDiscordSignature(kp.hex, "zz", ts, body), false);
-  assert.equal(verifyDiscordSignature(undefined, sig, ts, body), false);
-  assert.equal(verifyDiscordSignature(kp.hex, null, ts, body), false);
-});
 
 test("telegram secret check", () => {
   assert.equal(verifyTelegramSecret("abc_DEF-123", "abc_DEF-123"), true);
@@ -95,20 +76,6 @@ test("guided create, invite join, role mapping and guards (memory store, no PayP
   assert.match((await core.submit(rec, undefined, "done")).text, /only be submitted once it's funded/);
   assert.match((await core.status(stranger, id)).text, /Escrow escrow_/); // same chat -> visible
   assert.match((await core.status({ ...stranger, chatId: "other" }, id)).text, /not a party/);
-});
-
-test("discord route: 401 on bad signature, PONG on valid PING", async () => {
-  const kp = keypair();
-  process.env.DISCORD_PUBLIC_KEY = kp.hex;
-  const { POST } = await import("../app/api/discord/interactions/route");
-  const body = JSON.stringify({ id: "1", type: 1, token: "t", application_id: "a" });
-  const ts = String(Math.floor(Date.now() / 1000));
-  const good = sign(null, Buffer.from(ts + body), kp.privateKey).toString("hex");
-  const bad = await POST(new Request("http://x/api/discord/interactions", { method: "POST", body, headers: { "x-signature-ed25519": "0".repeat(128), "x-signature-timestamp": ts } }));
-  assert.equal(bad.status, 401);
-  const ok = await POST(new Request("http://x/api/discord/interactions", { method: "POST", body, headers: { "x-signature-ed25519": good, "x-signature-timestamp": ts } }));
-  assert.equal(ok.status, 200);
-  assert.deepEqual(await ok.json(), { type: 1 });
 });
 
 test("telegram route: 401 without secret", async () => {

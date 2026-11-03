@@ -33,7 +33,7 @@ export function getEvaluationModel() {
 }
 
 
-/** Shared AI verifier used by the web route and the Telegram/Discord bots. */
+/** Shared AI verifier used by the web route and the Telegram bots. */
 export async function evaluateEscrow(escrow: EscrowRecord): Promise<NonNullable<EscrowRecord["evaluationResult"]>> {
   const model = getEvaluationModel();
   

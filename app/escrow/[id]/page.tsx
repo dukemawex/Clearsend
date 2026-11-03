@@ -327,6 +327,24 @@ export default function EscrowPage() {
 
         <EscrowDocuments escrow={escrow} role={role} token={token} onChange={loadEscrow} />
 
+        {/* Receipts (only real PayPal sandbox events) */}
+        <Card className="mb-6">
+          <CardHeader>
+            <CardTitle>Receipts</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2 text-sm">
+            {(escrow.receipts ?? []).length === 0 ? (
+              <p className="text-gray-600">No receipts yet. One is issued automatically after the PayPal sandbox capture, payout or refund.</p>
+            ) : (escrow.receipts ?? []).map((r) => (
+              <a key={r.id} href={`/receipt/${r.id}?role=${role}&token=${token ?? ""}`} className="flex items-center justify-between rounded-lg border px-3 py-2 hover:bg-blue-50">
+                <span><b className="capitalize">{r.kind}</b> <span className="font-mono text-gray-500">{r.number}</span></span>
+                <span className="font-semibold">{r.amount.toFixed(2)} {r.currency} · {r.status}</span>
+              </a>
+            ))}
+            {token && <a className="inline-block pt-1 font-semibold text-blue-700 underline" href={`/receipts?escrow=${id}&role=${role}&token=${token}`}>All receipts for this escrow</a>}
+          </CardContent>
+        </Card>
+
         {/* Deliverable Submission (for recipient) */}
         {role === "recipient" && escrow.state === "funded" && (
           <Card className="mb-6">
@@ -450,6 +468,7 @@ export default function EscrowPage() {
                 <p><strong>PayPal Order ID:</strong> {escrow.orderId}</p>
                 {escrow.captureId && <p><strong>Capture ID:</strong> {escrow.captureId}</p>}
                 {escrow.payoutBatchId && <p><strong>Payout Batch ID:</strong> {escrow.payoutBatchId}</p>}
+                {escrow.refundId && <p><strong>Refund ID:</strong> {escrow.refundId}</p>}
               </div>
             )}
           </CardContent>

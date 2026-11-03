@@ -11,7 +11,7 @@ export default function ActivityPage() {
   const [subject, setSubject] = useState("");
   return (
     <Room>
-      <PageHeader eyebrow="Audit trail" title="Activity">Every search, choice, PayPal call, AI decision and human confirmation, from the web app, the agent and the Telegram/Discord bots. Read from the live log; nothing is seeded.</PageHeader>
+      <PageHeader eyebrow="Audit trail" title="Activity">Every search, choice, PayPal call, AI decision and human confirmation, from the web app, the agent and the Telegram bots. Read from the live log; nothing is seeded.</PageHeader>
       <Card className="mb-6 space-y-3">
         <div className="flex flex-wrap gap-1" role="group" aria-label="Filter by kind">
           {KINDS.map(([k, l]) => <button key={k} onClick={() => setKind(k)} aria-pressed={kind === k} className={cx("rounded-full px-3 py-1.5 text-sm", kind === k ? "btn-primary font-bold" : "btn-ghost")}>{l}</button>)}

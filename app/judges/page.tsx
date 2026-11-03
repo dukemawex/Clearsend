@@ -227,7 +227,7 @@ export default function JudgesPage() {
           <li><b>Confirm</b>: traveller details, price breakdown, then type “yes, book it”.</li>
           <li><b>Pay with PayPal</b> (sandbox). PayPal returns you to /paypal/return, where you type CAPTURE.</li>
           <li><b>Escrow funded</b>: <Link href="/escrow/new" style={{ color: "#0070ba" }}>/escrow/new</Link> shows a live FX quote and gives payer, recipient and verifier links; the payer types the amount to fund.</li>
-          <li><b>Deliverable submitted</b> by the recipient (web, Telegram or Discord, text or a document).</li>
+          <li><b>Deliverable submitted</b> by the recipient (web or Telegram, text or a document).</li>
           <li><b>AI verified</b> criterion by criterion by a free model.</li>
           <li><b>Human release</b>: the payer types the exact amount.</li>
           <li><b>Paid out</b> by PayPal Payout. Watch each step land in <Link href="/activity" style={{ color: "#0070ba" }}>/activity</Link> and on the <Link href="/" style={{ color: "#0070ba" }}>Room</Link> home.</li>

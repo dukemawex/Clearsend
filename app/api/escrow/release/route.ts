@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { notifyReceipt } from "@/lib/chatbots/notify";
 import { releaseEscrow, getEscrow } from "@/lib/escrow";
 import { verifyEscrowToken, type EscrowRole } from "@/lib/escrow-links";
 import { createPayout } from "@/lib/paypal";
@@ -55,7 +56,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Payout batch ID not found in PayPal response" }, { status: 500 });
     }
     
-    const updated = await releaseEscrow(escrowId, batchId, itemId);
+    const updated = await releaseEscrow(escrowId, batchId, itemId, payoutResult.batch_header?.batch_status as string | undefined);
+    await notifyReceipt(updated, "payout");
     return NextResponse.json(updated);
   } catch (error) {
     if (error instanceof z.ZodError) {

@@ -1,5 +1,6 @@
 import { recordActivity } from "./activity";
 import { z } from "zod";
+import { Receipt, buildReceipt, type ReceiptKind } from "./receipts";
 
 export const TripState = z.enum([
   "draft",
@@ -67,6 +68,7 @@ export const TripRecord = z.object({
   // Refund
   refundId: z.string().optional(),
   refundReason: z.string().optional(),
+  receipts: z.array(Receipt).optional(),
   
   // Timestamps
   createdAt: z.number(),
@@ -285,8 +287,12 @@ export async function addPassengerDetails(id: string, passenger: PassengerDetail
   return updateTrip(id, { passenger }, "payment_pending");
 }
 
-export async function markPaymentApproved(id: string, orderId: string, captureId: string, paymentTokenId?: string): Promise<TripRecord> {
-  return updateTrip(id, { 
+export async function markPaymentApproved(id: string, orderId: string, captureId: string, paymentTokenId?: string, status?: string): Promise<TripRecord> {
+  const trip = await getTrip(id);
+  if (!trip) throw new TripError(`Trip ${id} not found`, "NOT_FOUND");
+  const receipt = tripReceipt({ ...trip, paypalOrderId: orderId, paypalCaptureId: captureId }, "funding", status ?? "COMPLETED");
+  await recordActivity({ kind: "paypal", subject: id, actor: "ClearSend", summary: `Receipt ${receipt.number} issued (trip payment, ${receipt.amount.toFixed(2)} ${receipt.currency}).`, data: { receiptId: receipt.id } });
+  return updateTrip(id, { receipts: [...(trip.receipts ?? []), receipt], 
     paypalOrderId: orderId, 
     paypalCaptureId: captureId,
     paypalPaymentTokenId: paymentTokenId,
@@ -311,6 +317,22 @@ export async function failTrip(id: string, reason: string): Promise<TripRecord> 
   return updateTrip(id, { refundReason: reason }, "failed");
 }
 
-export async function refundTrip(id: string, refundId: string, reason: string): Promise<TripRecord> {
-  return updateTrip(id, { refundId, refundReason: reason }, "refunded");
+export async function refundTrip(id: string, refundId: string, reason: string, status?: string): Promise<TripRecord> {
+  const trip = await getTrip(id);
+  if (!trip) throw new TripError(`Trip ${id} not found`, "NOT_FOUND");
+  const receipt = tripReceipt({ ...trip, refundId }, "refund", status ?? "COMPLETED");
+  await recordActivity({ kind: "paypal", subject: id, actor: "ClearSend", summary: `Receipt ${receipt.number} issued (trip refund, ${receipt.amount.toFixed(2)} ${receipt.currency}).`, data: { receiptId: receipt.id } });
+  return updateTrip(id, { refundId, refundReason: reason, receipts: [...(trip.receipts ?? []), receipt] }, "refunded");
+}
+
+function tripReceipt(t: TripRecord, kind: ReceiptKind, status: string) {
+  const name = t.passenger ? [(t.passenger as Record<string, unknown>).firstName, (t.passenger as Record<string, unknown>).lastName].filter(Boolean).join(" ") : "";
+  return buildReceipt({
+    kind, subjectType: "trip", subjectId: t.id, issuedAt: Date.now(),
+    payer: name || "Traveller", payerEmail: (t.passenger as Record<string, unknown> | undefined)?.email as string | undefined,
+    recipient: `${t.airline} (${t.provider})`, description: `${t.origin} → ${t.destination} on ${t.departureDate}${t.flightNumber ? `, ${t.flightNumber}` : ""}`,
+    amount: t.totalPrice, currency: t.currency, fx: null, feeOverride: { percent: 3, amount: t.serviceFee },
+    paypal: { orderId: t.paypalOrderId, captureId: t.paypalCaptureId, refundId: kind === "refund" ? t.refundId : undefined },
+    status,
+  });
 }

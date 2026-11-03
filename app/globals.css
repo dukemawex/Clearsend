@@ -82,3 +82,10 @@ button, textarea { font: inherit; } button { -webkit-tap-highlight-color: transp
 @media (max-width: 1023px) { .nav-links { display: none; } .nav-toggle { display: inline-grid; place-items: center; } .mobile-nav.open { display: grid; gap: 4px; position: sticky; top: 72px; z-index: 49; background: white; border-bottom: 1px solid var(--slate-200); padding: 10px 16px; } }
 @media (min-width: 1024px) { .nav-label { display: inline; } .nav-link { padding: 10px 10px; font-size: 13px; } .nav-icon { font-size: 15px; } }
 @media (prefers-reduced-motion: reduce) { .cs-skeleton, .cs-rise { animation: none; } }
+@media print {
+  nav, header.app-nav, .no-print, .mobile-nav, .nav-toggle { display: none !important; }
+  body, .cs-room { background: #fff !important; }
+  .cs-room main { padding: 0 !important; }
+  .receipt-sheet { box-shadow: none !important; border: 1px solid #cbd5e1 !important; max-width: 100% !important; }
+  @page { margin: 14mm; }
+}

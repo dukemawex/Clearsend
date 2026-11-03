@@ -1,5 +1,6 @@
 import { recordActivity } from "./activity";
 import { z } from "zod";
+import { Receipt, buildReceipt, fxAtEvent, type ReceiptKind } from "./receipts";
 
 export const EscrowState = z.enum(["created", "funded", "submitted", "verified", "rejected", "released", "refunded"]);
 export type EscrowState = z.infer<typeof EscrowState>;
@@ -21,6 +22,8 @@ export const EscrowRecord = z.object({
   captureId: z.string().optional(),
   payoutBatchId: z.string().optional(),
   payoutItemId: z.string().optional(),
+  refundId: z.string().optional(),
+  receipts: z.array(Receipt).optional(),
   deliverable: z.string().optional(),
   documents: z.array(z.object({
     role: z.enum(["spec", "deliverable"]),
@@ -238,12 +241,13 @@ async function updateEscrow(id: string, updates: Partial<EscrowRecord>, newState
   return updated;
 }
 
-export async function fundEscrow(id: string, orderId: string, captureId: string): Promise<EscrowRecord> {
+export async function fundEscrow(id: string, orderId: string, captureId: string, status?: string): Promise<EscrowRecord> {
   const escrow = await getEscrow(id);
   if (!escrow) throw new EscrowError(`Escrow ${id} not found`, "NOT_FOUND");
   if (escrow.state !== "created") throw new EscrowError(`Escrow ${id} is already ${escrow.state}, cannot fund`, "INVALID_STATE");
   
-  return updateEscrow(id, { orderId, captureId }, "funded");
+  const receipt = await escrowReceipt({ ...escrow, orderId, captureId }, "funding", status ?? "COMPLETED");
+  return updateEscrow(id, { orderId, captureId, receipts: [...(escrow.receipts ?? []), receipt] }, "funded");
 }
 
 export async function submitDeliverable(id: string, deliverable: string): Promise<EscrowRecord> {
@@ -263,15 +267,16 @@ export async function verifyDeliverable(id: string, result: EscrowRecord["evalua
   return updateEscrow(id, { evaluationResult: result }, result?.met ? "verified" : "rejected");
 }
 
-export async function releaseEscrow(id: string, payoutBatchId: string, payoutItemId?: string): Promise<EscrowRecord> {
+export async function releaseEscrow(id: string, payoutBatchId: string, payoutItemId?: string, status?: string): Promise<EscrowRecord> {
   const escrow = await getEscrow(id);
   if (!escrow) throw new EscrowError(`Escrow ${id} not found`, "NOT_FOUND");
   if (escrow.state !== "verified") throw new EscrowError(`Escrow ${id} is ${escrow.state}, expected 'verified'`, "INVALID_STATE");
   
-  return updateEscrow(id, { payoutBatchId, payoutItemId }, "released");
+  const receipt = await escrowReceipt({ ...escrow, payoutBatchId, payoutItemId }, "payout", status ?? "PENDING");
+  return updateEscrow(id, { payoutBatchId, payoutItemId, receipts: [...(escrow.receipts ?? []), receipt] }, "released");
 }
 
-export async function refundEscrow(id: string, refundId: string): Promise<EscrowRecord> {
+export async function refundEscrow(id: string, refundId: string, status?: string): Promise<EscrowRecord> {
   const escrow = await getEscrow(id);
   if (!escrow) throw new EscrowError(`Escrow ${id} not found`, "NOT_FOUND");
   if (!["funded", "submitted", "rejected"].includes(escrow.state)) {
@@ -279,7 +284,8 @@ export async function refundEscrow(id: string, refundId: string): Promise<Escrow
   }
   if (!escrow.captureId) throw new EscrowError(`Escrow ${id} has no captureId, cannot refund`, "NO_CAPTURE");
   
-  return updateEscrow(id, { orderId: refundId }, "refunded");
+  const receipt = await escrowReceipt({ ...escrow, refundId }, "refund", status ?? "COMPLETED");
+  return updateEscrow(id, { refundId, receipts: [...(escrow.receipts ?? []), receipt] }, "refunded");
 }
 
 export async function attachEscrowDocument(id: string, role: "spec" | "deliverable", doc: { name: string; kind: string; size: number; text: string; truncated: boolean; method: string; note?: string; uploadedAt: number }): Promise<EscrowRecord> {
@@ -288,4 +294,18 @@ export async function attachEscrowDocument(id: string, role: "spec" | "deliverab
   const docs = escrow.documents ?? [];
   if (docs.length >= 6) throw new EscrowError("This escrow already has the maximum of 6 documents", "TOO_MANY_DOCUMENTS");
   return updateEscrow(id, { documents: [...docs, { role, ...doc }] });
+}
+
+/** Builds a receipt from the stored escrow plus the real PayPal ids just returned; FX is a live quote at event time. */
+async function escrowReceipt(e: EscrowRecord, kind: ReceiptKind, status: string): Promise<Receipt> {
+  const receipt = buildReceipt({
+    kind, subjectType: "escrow", subjectId: e.id, issuedAt: Date.now(),
+    payer: e.payer, payerEmail: e.payerEmail, recipient: e.recipient, recipientEmail: e.recipientEmail, recipientCountry: e.recipientCountry,
+    description: e.specification, amount: e.amount, currency: e.currency,
+    fx: kind === "refund" ? null : await fxAtEvent(e.currency, e.recipientCountry),
+    paypal: { orderId: e.orderId, captureId: e.captureId, payoutBatchId: kind === "payout" ? e.payoutBatchId : undefined, payoutItemId: kind === "payout" ? e.payoutItemId : undefined, refundId: kind === "refund" ? e.refundId : undefined },
+    status,
+  });
+  await recordActivity({ kind: "paypal", subject: e.id, actor: "ClearSend", summary: `Receipt ${receipt.number} issued (${kind}, ${receipt.amount.toFixed(2)} ${receipt.currency}, ${status}).`, data: { receiptId: receipt.id } });
+  return receipt;
 }

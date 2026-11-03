@@ -91,12 +91,12 @@ ClearSend's home page (`/`) is the **Room**: a live activity feed, a 9-step work
 | 3 | Confirm | traveller details, price breakdown, typed "yes, book it" | payer |
 | 4 | Pay with PayPal | PayPal sandbox approve, then `/paypal/return` and type `CAPTURE` | payer |
 | 5 | Escrow funded | `/escrow/new` (live FX quote) then payer role view, type the amount to fund | payer |
-| 6 | Deliverable submitted | recipient role view, Telegram or Discord | recipient |
+| 6 | Deliverable submitted | recipient role view, Telegram | recipient |
 | 7 | AI verified | free model checks each criterion | agent + verifier |
 | 8 | Human release | payer types the exact amount (web) or presses a button and types it (bots) | payer |
 | 9 | Paid out | PayPal Payout to any supported country | PayPal |
 
-- **Activity log:** `lib/activity.ts` writes real entries to Upstash (`cs-activity:*`) on every escrow and trip state change, flight search, and Telegram/Discord bot action. `GET /api/activity?kind=&subject=&q=` is public without raw payloads; `POST` (agent status) and `DELETE ?id=|?subject=` (test cleanup) need `x-clearsend-api-key`. Empty states are honest; nothing is seeded.
+- **Activity log:** `lib/activity.ts` writes real entries to Upstash (`cs-activity:*`) on every escrow and trip state change, flight search, and Telegram bot action. `GET /api/activity?kind=&subject=&q=` is public without raw payloads; `POST` (agent status) and `DELETE ?id=|?subject=` (test cleanup) need `x-clearsend-api-key`. Empty states are honest; nothing is seeded.
 - **PayPal return/cancel:** orders return to `/paypal/return?kind=escrow|trip|order&id=…` and `/paypal/cancel`. These URLs never carry a role or trip token. Role links are kept only on the payer's device.
 - **Prices:** `/plan` books only live Sky-Scrapper or Duffel (test) fares. Open-data results are labelled "fare unavailable" and cannot be booked.
 - **Theme:** ClearSend white and blue by default, optional dark mode for Room pages (toggle in the nav), mobile menu below 1024px.
@@ -109,13 +109,23 @@ ClearSend's home page (`/`) is the **Room**: a live activity feed, a 9-step work
 - **Verifier:** `/api/escrow/verify` fences spec and deliverable text as untrusted, tells the model to flag injection attempts, and rejects deliverables with no readable text.
 - **Extraction:** `unpdf` for PDFs (text layer only, scans give no text), `mammoth` for DOCX, UTF-8 for TXT, `tesseract.js` OCR for images. OCR downloads its language data at runtime; if that fails on the serverless function the UI says so and asks for a text format.
 
-## Use ClearSend in Telegram or Discord
+## Payment receipts
 
-Add ClearSend to a Telegram group or a Discord server and run the same PayPal-backed escrow in the conversation. Both bots are serverless: Telegram uses a webhook (`POST /api/telegram/webhook`) and Discord uses HTTP interactions (`POST /api/discord/interactions`). No long-running bot process. Setup steps and add-to-chat links are also on the in-app page `/chat-bots`.
+Every real PayPal sandbox event issues a receipt, persisted on the escrow or trip record at that moment (`receipts[]`): funding capture, release payout and refund (trips: payment capture and auto-refund). Fields: receipt number, escrow/trip id, time in UTC and Lagos (WAT), payer, recipient, amount, currency, fee (2.5% escrow; trips use their stored 3% service fee), live FX mid-market rate, 1.2% spread and destination amount (quote at event time, when the recipient country maps to a currency), PayPal order id, capture id, payout batch/item id or refund id, PayPal status, and the label "PayPal Sandbox - test payment, no real money". Nothing is seeded.
+
+- `/receipt/<id>?role=&token=`: printable receipt (Download PDF uses the browser print-to-PDF stylesheet), copy-link. Same HMAC role tokens as escrow routes; trips accept the payer token.
+- `/receipts?escrow=&role=&token=` and the **Receipts** card on each escrow role page.
+- `GET /api/receipts/<id>?role=&token=` (401 missing, 403 wrong token) or `x-clearsend-api-key`.
+- MCP tool `getReceipt` (`id`, or `escrowId`/`tripId` to list).
+- Telegram: on fund, release and refund the group gets a token-free summary; the payer gets a DM with their private receipt link. An activity entry is written for each receipt.
+
+## Use ClearSend in Telegram
+
+Add ClearSend to a Telegram group and run the same PayPal-backed escrow in the conversation. The bot is serverless: Telegram uses a webhook (`POST /api/telegram/webhook`). No long-running bot process. Setup steps and add-to-chat links are also on the in-app page `/chat-bots`.
 
 **Flow:** payer creates the escrow (becomes payer) -> recipient/verifier join with an invite code or their ClearSend role link (roles bound to the chat user id) -> payer funds via a PayPal sandbox approval link (sent privately) and presses "I approved" to capture -> recipient submits text or a file (PDF/DOCX/TXT/image, read by `lib/documents.ts`) -> AI verifier (`lib/verifier.ts`, free OpenRouter/NVIDIA model, documents treated as untrusted) -> payer presses **Confirm release** and types exactly `RELEASE <amount> <CUR>` -> PayPal Payout. Refund (payer or verifier) needs `REFUND <amount> <CUR>`.
 
-**Guards:** release only by the payer and only when the escrow is `verified`; the role is re-checked when money moves; confirmations expire after 10 minutes and run once; per-user rate limit (20/min); Telegram `update_id` and Discord interaction id idempotency; activity log at `clearsend:chat:activity`; all mappings in Upstash under `clearsend:chat:`; PayPal sandbox only; tokens never logged.
+**Guards:** release only by the payer and only when the escrow is `verified`; the role is re-checked when money moves; confirmations expire after 10 minutes and run once; per-user rate limit (20/min); Telegram `update_id` idempotency; activity log at `clearsend:chat:activity`; all mappings in Upstash under `clearsend:chat:`; PayPal sandbox only; tokens never logged.
 
 ### Telegram (BotFather)
 1. Message **@BotFather** -> `/newbot` -> pick a name and a username ending in `bot`. Copy the token.
@@ -127,20 +137,7 @@ Add ClearSend to a Telegram group or a Discord server and run the same PayPal-ba
    ```
 5. Add the bot to a group with `https://t.me/<bot>?startgroup=true`. Commands: `/escrow`, `/escrow 150 USD to Ada <ada@example.com> for 3 logo concepts`, `/join <code>`, `/status`, `/fund`, `/submit` (text, or reply to a document/photo), `/verify`, `/release`, `/refund`, `/quote 100 USD NGN`, `/cancel`, `/help`. Invite links `https://t.me/<bot>?start=<code>` join from a DM. Each party should press Start in a DM once so private links (PayPal approval, role link) can be delivered; otherwise the PayPal approval link falls back to the group.
 
-### Discord (Developer Portal)
-1. https://discord.com/developers/applications -> **New Application**. General Information: copy **Application ID** and **Public Key**.
-2. **Bot** tab -> Reset Token -> copy the **bot token** (only used by the command registration script). No privileged gateway intents are needed (no Message Content, Members or Presence).
-3. Vercel env: `DISCORD_APP_ID`, `NEXT_PUBLIC_DISCORD_APP_ID` (same value), `DISCORD_PUBLIC_KEY`, `DISCORD_BOT_TOKEN`. Redeploy.
-4. General Information -> **Interactions Endpoint URL**: `https://clearsend-sigma.vercel.app/api/discord/interactions` -> Save. Discord sends a signed PING; the route verifies Ed25519 and answers PONG (bad signatures get 401).
-5. Register slash commands (`/escrow help|create|join|status|fund|submit|verify|release|refund`, `/quote`):
-   ```bash
-   DISCORD_APP_ID=... DISCORD_BOT_TOKEN=... node scripts/discord-register-commands.mjs [guildId]
-   ```
-6. Invite: `https://discord.com/oauth2/authorize?client_id=<APP_ID>&scope=bot%20applications.commands&permissions=2147600384` (Send Messages, Embed Links, Attach Files, Read Message History, Use Application Commands). The script prints it too.
-
-Release/refund on Discord use a button that opens a modal where the typed words are entered. Slow work (AI verify, PayPal calls) uses a deferred response and edits the original message via the interaction webhook.
-
-Tests: `npm test` (Discord signature with a generated Ed25519 keypair, Telegram secret, parsing, role mapping and guards, route 401/PONG).
+Tests: `npm test` (Telegram secret, parsing, role mapping and guards, webhook 401, receipt builder).
 
 ## Local development
 
