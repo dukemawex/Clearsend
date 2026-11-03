@@ -9,7 +9,7 @@ import type { StructuredSpec } from "@/lib/spec";
 import type { ExtractedDocument } from "@/lib/documents";
 import { PAYOUT_COUNTRIES, PAYOUT_CURRENCIES, checkPayoutEligibility, type RecipientType } from "@/lib/payout-countries";
 
-type Quote = { midRate: number; effectiveRate: number; source: string; fee: number; totalCharged: number; received: number; to: string; at: string };
+type Quote = { midRate: number; effectiveRate: number; spreadPct: number; source: string; fee: number; totalCharged: number; received: number; to: string; at: string };
 const ROLE_TEXT: Record<string, string> = { payer: "Funds with PayPal and types the amount to release.", recipient: "Submits the deliverable and gets the PayPal Payout.", verifier: "Reviews the AI verdict." };
 
 export default function NewEscrow() {
@@ -153,7 +153,7 @@ export default function NewEscrow() {
             {qErr ? <ErrorBox>{qErr}</ErrorBox> : !quote ? <Skeleton className="h-32" /> : (
               <>
                 <Row k="Mid-market rate" v={`${quote.midRate.toFixed(4)} (${quote.source})`} />
-                <Row k="After 1.2% FX spread" v={quote.effectiveRate.toFixed(4)} />
+                <Row k={`After ${quote.spreadPct}% FX spread`} v={quote.effectiveRate.toFixed(4)} />
                 <Row k="ClearSend fee (2.5%)" v={<Money amount={quote.fee} currency={f.currency} />} />
                 <Row k="Payer is charged" v={<Money amount={quote.totalCharged} currency={f.currency} />} />
                 <Row strong k="Recipient gets about" v={<Money amount={quote.received} currency={quote.to} className="c-ok" />} />

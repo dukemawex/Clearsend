@@ -86,13 +86,13 @@ export function help(platform: Platform): Reply {
 export async function quote(args: string): Promise<Reply> {
   const q = parseQuote(args);
   if (!q) return { text: "Usage: /quote 100 USD NGN", ephemeral: true };
-  const { rate, source } = await getMidMarketRate(q.from, q.to);
-  const b = quoteBreakdown(q.amount, rate);
+  const { rate, source } = q.from === q.to ? { rate: 1, source: "same currency" } : await getMidMarketRate(q.from, q.to);
+  const b = quoteBreakdown(q.amount, rate, q.from, q.to);
   return { text: [
     `Quote for ${money(q.amount, q.from)} to ${q.to} (live, ${source})`,
     `Fee (2.5%): ${money(b.fee, q.from)}`,
     `Mid-market rate: 1 ${q.from} = ${rate.toFixed(4)} ${q.to}`,
-    `Your rate (incl. 1.2% FX spread): ${b.customerRate.toFixed(4)}`,
+    `Your rate (incl. ${b.spreadPercent}% FX spread): ${b.customerRate.toFixed(4)}`,
     `Recipient gets: ${b.receive.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${q.to}`,
   ].join("\n") };
 }

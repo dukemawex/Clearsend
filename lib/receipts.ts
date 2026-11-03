@@ -4,6 +4,11 @@ import { getMidMarketRate } from "./fx";
 
 export const FEE_PERCENT = 2.5;
 export const FX_SPREAD_PERCENT = 1.2;
+
+/** ClearSend's FX spread applies only to real conversions; same-currency payouts have none. */
+export function spreadPercentFor(from: string, to: string): number {
+  return from.trim().toUpperCase() === to.trim().toUpperCase() ? 0 : FX_SPREAD_PERCENT;
+}
 export const SANDBOX_LABEL = "PayPal Sandbox - test payment, no real money";
 
 export const ReceiptKind = z.enum(["funding", "payout", "refund"]);
@@ -89,8 +94,11 @@ export function buildReceipt(i: BuildInput): Receipt {
   const feePercent = i.feeOverride?.percent ?? FEE_PERCENT;
   const fee = r2(i.feeOverride?.amount ?? i.amount * FEE_PERCENT / 100);
   const fx = i.fx ? (() => {
-    const customerRate = i.fx.midMarketRate * (1 - FX_SPREAD_PERCENT / 100);
-    return { destinationCurrency: i.fx.destinationCurrency, midMarketRate: i.fx.midMarketRate, spreadPercent: FX_SPREAD_PERCENT, customerRate, destinationAmount: r2((i.amount - fee) * customerRate), source: i.fx.source };
+    const same = spreadPercentFor(i.currency, i.fx.destinationCurrency) === 0;
+    const spreadPercent = same ? 0 : FX_SPREAD_PERCENT;
+    const midMarketRate = same ? 1 : i.fx.midMarketRate;
+    const customerRate = midMarketRate * (1 - spreadPercent / 100);
+    return { destinationCurrency: i.fx.destinationCurrency, midMarketRate, spreadPercent, customerRate, destinationAmount: r2((i.amount - fee) * customerRate), source: i.fx.source };
   })() : undefined;
   const d = new Date(i.issuedAt);
   const number = `CS-${d.toISOString().slice(0, 10).replace(/-/g, "")}-${i.kind.slice(0, 3).toUpperCase()}-${i.subjectId.slice(-6).toUpperCase()}`;
