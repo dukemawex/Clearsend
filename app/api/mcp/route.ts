@@ -1,5 +1,18 @@
 import { NextResponse } from "next/server";
 import { agentTools } from "@/lib/agent";
+import { recentActivity } from "@/lib/chatbots/store";
+import { discordInviteUrl } from "@/lib/chatbots/discord";
+
+function chatBotsInfo() {
+  const base = process.env.NEXT_PUBLIC_APP_URL && !process.env.NEXT_PUBLIC_APP_URL.includes("localhost") ? process.env.NEXT_PUBLIC_APP_URL : process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : null;
+  const tg = process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME;
+  const dc = process.env.NEXT_PUBLIC_DISCORD_APP_ID;
+  return {
+    telegram: { configured: !!(tg && process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_WEBHOOK_SECRET), addToGroup: tg ? `https://t.me/${tg}?startgroup=true` : null, webhook: base ? `${base}/api/telegram/webhook` : null },
+    discord: { configured: !!(dc && process.env.DISCORD_PUBLIC_KEY), addToServer: dc ? discordInviteUrl(dc) : null, interactionsEndpoint: base ? `${base}/api/discord/interactions` : null },
+    setupPage: base ? `${base}/chat-bots` : "/chat-bots",
+  };
+}
 
 export const runtime = "nodejs";
 
@@ -134,6 +147,16 @@ export async function POST(request: Request) {
             type: "object",
             properties: {}
           }
+        },
+        {
+          name: "chatBotsInfo",
+          description: "Read-only. Whether the Telegram and Discord escrow bots are configured, their add-to-chat links and webhook/interaction endpoint URLs.",
+          inputSchema: { type: "object", properties: {} }
+        },
+        {
+          name: "listChatEscrowActivity",
+          description: "Read-only. Recent escrow actions taken from Telegram groups and Discord servers (create, join, fund, submit, verify, release, refund). No message content or secrets.",
+          inputSchema: { type: "object", properties: { limit: { type: "number", description: "Max entries (1-100), default 25" } } }
         }
       ];
 
@@ -143,6 +166,11 @@ export async function POST(request: Request) {
     // MCP protocol: call tool
     if (method === "tools/call") {
       const { name, arguments: args } = params;
+
+      if (name === "chatBotsInfo" || name === "listChatEscrowActivity") {
+        const result = name === "chatBotsInfo" ? chatBotsInfo() : { activity: await recentActivity(Math.min(100, Math.max(1, Number(args?.limit) || 25))) };
+        return NextResponse.json({ content: [{ type: "text", text: JSON.stringify(result, null, 2) }], _meta: { provider: "clearsend", sandbox: true } });
+      }
 
       // Route to the appropriate tool
       const tool = agentTools[name as keyof typeof agentTools];

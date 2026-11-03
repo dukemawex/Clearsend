@@ -12,6 +12,7 @@ export function AppNav() {
     { href: "/send", label: "Send Money", icon: "💸" },
     { href: "/trips", label: "Flights & Trips", icon: "✈️" },
     { href: "/escrow", label: "Escrow", icon: "🔒" },
+    { href: "/chat-bots", label: "Chat Bots", icon: "🤖" },
     { href: "/judges", label: "Judges", icon: "📋" },
   ];
 
