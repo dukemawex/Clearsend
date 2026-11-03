@@ -4,6 +4,9 @@ import { Stepper } from "@/components/room/Stepper";
 import { useToast } from "@/components/room/Toaster";
 import { Card, ErrorBox, Eyebrow, Money, PageHeader, Row, SandboxNote, Skeleton } from "@/components/room/ui";
 import { saveLinks } from "@/lib/creds";
+import { SpecReview } from "@/components/SpecReview";
+import type { StructuredSpec } from "@/lib/spec";
+import type { ExtractedDocument } from "@/lib/documents";
 
 type Quote = { midRate: number; effectiveRate: number; source: string; fee: number; totalCharged: number; received: number; to: string; at: string };
 const ROLE_TEXT: Record<string, string> = { payer: "Funds with PayPal and types the amount to release.", recipient: "Submits the deliverable and gets the PayPal Payout.", verifier: "Reviews the AI verdict." };
@@ -16,6 +19,46 @@ export default function NewEscrow() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [made, setMade] = useState<{ id: string; links: Record<string, string> } | null>(null);
+  const [spec, setSpec] = useState<StructuredSpec | null>(null);
+  const [specDoc, setSpecDoc] = useState<ExtractedDocument | null>(null);
+  const [specModel, setSpecModel] = useState<string | undefined>();
+  const [specBusy, setSpecBusy] = useState(false);
+  const [specErr, setSpecErr] = useState<string | null>(null);
+  const [specOk, setSpecOk] = useState(false);
+
+  function applySpec(sp: StructuredSpec, doc: ExtractedDocument | null, model?: string) {
+    setSpec(sp); setSpecDoc(doc); setSpecModel(model); setSpecOk(false);
+    setF((cur) => ({
+      ...cur,
+      specification: [sp.title, sp.summary, sp.deliverables.length ? "Deliverables:\n" + sp.deliverables.map((d) => "- " + d).join("\n") : "", sp.deadline ? "Deadline: " + sp.deadline : ""].filter(Boolean).join("\n") || cur.specification,
+      criteria: sp.acceptanceCriteria.join("\n") || cur.criteria,
+      amount: sp.amount ? String(sp.amount) : cur.amount,
+      currency: sp.currency ?? cur.currency,
+      recipient: cur.recipient || sp.recipientName || "",
+    }));
+  }
+  useEffect(() => {
+    try { const raw = sessionStorage.getItem("clearsend.specDraft"); if (raw) { sessionStorage.removeItem("clearsend.specDraft"); const d = JSON.parse(raw); if (d?.spec) applySpec(d.spec, d.document ?? null, d.model); } } catch { /* ignore */ }
+  }, []);
+
+  async function uploadSpec(file: File) {
+    if (file.size > 4.5 * 1024 * 1024) { setSpecErr("Files over 4.5 MB exceed the upload limit."); return; }
+    setSpecBusy(true); setSpecErr(null);
+    try {
+      const form = new FormData(); form.append("file", file);
+      const r = await fetch("/api/spec/extract", { method: "POST", body: form });
+      const j = await r.json();
+      if (!r.ok || !j.spec) throw new Error(j.error ?? `HTTP ${r.status}`);
+      applySpec(j.spec, j.document, j.model);
+      toast({ tone: "ok", title: "Spec extracted", body: "Review it, then confirm before creating the escrow." });
+    } catch (e) { setSpecErr((e as Error).message); } finally { setSpecBusy(false); }
+  }
+
+  function editSpec(sp: StructuredSpec) {
+    setSpec(sp); setSpecOk(false);
+    setF((cur) => ({ ...cur, criteria: sp.acceptanceCriteria.join("\n") }));
+  }
+
   const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => setF({ ...f, [k]: e.target.value });
 
   useEffect(() => {
@@ -33,9 +76,11 @@ export default function NewEscrow() {
   }, [f.amount, f.currency, f.receiveCurrency]);
 
   async function create(e: React.FormEvent) {
-    e.preventDefault(); setBusy(true); setErr(null);
+    e.preventDefault();
+    if (spec && !specOk) { setErr("Please review the extracted spec and tick \"This is correct\" first."); return; }
+    setBusy(true); setErr(null);
     try {
-      const body = { payer: f.payer, payerEmail: f.payerEmail, recipient: f.recipient, recipientEmail: f.recipientEmail || undefined, recipientCountry: f.recipientCountry.toUpperCase(), amount: Number(f.amount), currency: f.currency, specification: f.specification, acceptanceCriteria: f.criteria.split("\n").map((s) => s.trim()).filter(Boolean) };
+      const body = { payer: f.payer, payerEmail: f.payerEmail, recipient: f.recipient, recipientEmail: f.recipientEmail || undefined, recipientCountry: f.recipientCountry.toUpperCase(), amount: Number(f.amount), currency: f.currency, specification: f.specification, acceptanceCriteria: f.criteria.split("\n").map((s) => s.trim()).filter(Boolean), ...(spec ? { structuredSpec: { ...spec, acceptanceCriteria: f.criteria.split("\n").map((s) => s.trim()).filter(Boolean) } } : {}), ...(specDoc ? { specDocument: specDoc } : {}) };
       const r = await fetch("/api/escrow/create", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error === "Invalid input" ? "Check the form: " + (j.details?.map((d: { path: string[] }) => d.path.join(".")).join(", ") ?? "") : j.error);
@@ -80,6 +125,17 @@ export default function NewEscrow() {
               <label className="text-sm font-semibold">Currency<input className="cs-field mt-1" maxLength={3} required value={f.currency} onChange={(e) => setF({ ...f, currency: e.target.value.toUpperCase() })} /></label>
             </div>
           </div>
+          <div className="rounded-2xl border border-dashed border-blue-300 p-3">
+            <label className="block text-sm font-semibold">Upload a spec document (PDF, DOCX, TXT): AI extracts deliverables and criteria for you to confirm
+              <input type="file" accept=".pdf,.docx,.txt,.md,application/pdf,text/plain" className="mt-2 block text-sm" disabled={specBusy} onChange={(e) => { const file = e.target.files?.[0]; if (file) void uploadSpec(file); }} />
+            </label>
+            {specBusy && <p className="mt-2 text-sm text-mut">Reading the document and extracting the spec with the free model…</p>}
+            {specErr && <ErrorBox>{specErr}</ErrorBox>}
+          </div>
+          {spec && <>
+            <SpecReview spec={spec} onChange={editSpec} model={specModel} />
+            <label className="flex items-center gap-2 text-sm font-semibold"><input type="checkbox" checked={specOk} onChange={(e) => setSpecOk(e.target.checked)} /> This is correct. Use it as the escrow spec the AI verifier will check against.</label>
+          </>}
           <label className="block text-sm font-semibold">Specification (what must be delivered)<textarea className="cs-field mt-1 min-h-24" required value={f.specification} onChange={set("specification")} /></label>
           <label className="block text-sm font-semibold">Acceptance criteria (one per line, optional)<textarea className="cs-field mt-1 min-h-20" value={f.criteria} onChange={set("criteria")} /></label>
           {err && <ErrorBox>{err}</ErrorBox>}

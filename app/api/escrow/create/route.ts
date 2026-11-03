@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createEscrow } from "@/lib/escrow";
 import { createEscrowLink } from "@/lib/escrow-links";
 import { z } from "zod";
+import { StructuredSpec } from "@/lib/spec";
 
 const CreateEscrowSchema = z.object({
   payer: z.string(),
@@ -13,7 +14,9 @@ const CreateEscrowSchema = z.object({
   amount: z.number().positive(),
   currency: z.string().length(3),
   specification: z.string(),
-  acceptanceCriteria: z.array(z.string()).optional(),
+  acceptanceCriteria: z.array(z.string().max(500)).max(30).optional(),
+  structuredSpec: StructuredSpec.optional(),
+  specDocument: z.object({ name: z.string().max(120), kind: z.string().max(10), size: z.number().nonnegative(), text: z.string().max(20_000), truncated: z.boolean(), method: z.string().max(20), note: z.string().max(500).optional(), uploadedAt: z.number() }).optional(),
 });
 
 function getPublicBaseUrl(request: NextRequest): string {

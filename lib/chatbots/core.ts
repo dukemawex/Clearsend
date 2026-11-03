@@ -4,8 +4,9 @@ import { randomBytes } from "crypto";
 import { attachEscrowDocument, createEscrow, fundEscrow, getEscrow, refundEscrow, releaseEscrow, submitDeliverable, verifyDeliverable, type EscrowRecord } from "@/lib/escrow";
 import { createEscrowLink, verifyEscrowToken } from "@/lib/escrow-links";
 import { getMidMarketRate } from "@/lib/fx";
-import { captureOrder, createOrder, createPayout, refundCapture } from "@/lib/paypal";
-import { extractDocument } from "@/lib/documents";
+import { captureErrorMessage, captureOrder, createOrder, createPayout, refundCapture } from "@/lib/paypal";
+import { extractDocument, type ExtractedDocument } from "@/lib/documents";
+import { extractSpec, specToText, type StructuredSpec } from "@/lib/spec";
 import { evaluateEscrow } from "@/lib/verifier";
 import { del, getJSON, k, logActivity, setJSON, once } from "./store";
 import { confirmPhrase, isEmail, isEscrowId, isInviteCode, parseInlineEscrow, parseQuote, parseRoleLink, phraseMatches, quoteBreakdown, roleAllowed, type Role } from "./parse";
@@ -95,19 +96,19 @@ export async function quote(args: string): Promise<Reply> {
 }
 
 // ---------- create (inline or guided) ----------
-type Draft = { amount?: number; currency?: string; recipient?: string; recipientEmail?: string; recipientCountry?: string; specification?: string; payerEmail?: string };
+type Draft = { amount?: number; currency?: string; recipient?: string; recipientEmail?: string; recipientCountry?: string; specification?: string; payerEmail?: string; structuredSpec?: StructuredSpec; specDocument?: ExtractedDocument; pendingSpec?: StructuredSpec };
 const STEPS: Array<{ field: keyof Draft; ask: string }> = [
   { field: "amount", ask: "How much should go into escrow? Reply with amount and currency, e.g. 150 USD." },
   { field: "recipient", ask: "Who is being paid? Reply with their name." },
   { field: "recipientEmail", ask: "What is the recipient's PayPal email (sandbox)? Payouts are sent there on release." },
   { field: "recipientCountry", ask: "Which country is the recipient in? (e.g. NG, GH, KE, GB)" },
-  { field: "specification", ask: "Describe what must be delivered (the spec the AI verifier will check against)." },
+  { field: "specification", ask: "Describe what must be delivered (the spec the AI verifier will check against). Or send a spec document (PDF, DOCX or TXT) and I'll extract the deliverables and acceptance criteria for you to confirm." },
   { field: "payerEmail", ask: "Your PayPal email (sandbox), for the funding receipt. Tip: reply in a DM with the bot if you prefer not to share it in the group." },
 ];
 const draftKey = (ctx: Ctx) => k("draft", ctx.platform, ctx.chatId, ctx.userId);
 export async function hasDraft(ctx: Ctx) { return !!(await getJSON<Draft>(draftKey(ctx))); }
 
-function nextStep(d: Draft) { return STEPS.find((s) => d[s.field] === undefined || (s.field === "amount" && !d.currency)); }
+function nextStep(d: Draft) { if (d.pendingSpec) return undefined; return STEPS.find((s) => d[s.field] === undefined || (s.field === "amount" && !d.currency)); }
 
 export async function startCreate(ctx: Ctx, args: string): Promise<Reply> {
   let d: Draft = {};
@@ -119,20 +120,50 @@ export async function startCreate(ctx: Ctx, args: string): Promise<Reply> {
   return continueDraft(ctx, d);
 }
 
+function specCard(sp: StructuredSpec): string {
+  const out = ["Here is what I understood from your document. Confirm or edit:", specToText(sp) || "(no clear spec found)"];
+  if (sp.injectionDetected) out.push("⚠️ The document contains instructions aimed at the AI or payment system. I ignored them.");
+  if (!sp.clearSpec) out.push("The document doesn't clearly state a spec, so I didn't invent anything.");
+  if (sp.ambiguities.length) out.push("Unclear:\n" + sp.ambiguities.map((a) => `- ${a}`).join("\n"));
+  out.push(sp.clearSpec ? "Reply YES to use this spec, or type the corrected spec (deliverables and criteria) to use your text instead." : "Please type what's missing (what must be delivered and how to check it). Reply YES only if you want to use it as-is.");
+  return out.join("\n\n");
+}
+
+/** Payer sent a spec document while creating an escrow: extract text, then a structured spec to confirm. */
+export async function draftSpecDocument(ctx: Ctx, doc: IncomingDoc): Promise<Reply> {
+  const d = await getJSON<Draft>(draftKey(ctx));
+  if (!d) return { text: "Start an escrow with /escrow first, then send the spec document.", ephemeral: true };
+  const extracted = await extractDocument(new File([doc.bytes], doc.name, { type: doc.mime }));
+  if (!extracted.text.trim()) return { text: `I couldn't read text from ${extracted.name}${extracted.note ? ` (${extracted.note})` : ""}. Please type the spec instead.`, forceReply: true };
+  const { spec } = await extractSpec(extracted.name, extracted.text);
+  d.specDocument = extracted; d.pendingSpec = spec;
+  if (!d.amount && spec.amount && spec.currency) { d.amount = spec.amount; d.currency = spec.currency; }
+  if (!d.recipient && spec.recipientName) d.recipient = spec.recipientName.slice(0, 80);
+  await setJSON(draftKey(ctx), d, 1800);
+  return { text: specCard(spec), forceReply: true };
+}
+
 async function continueDraft(ctx: Ctx, d: Draft): Promise<Reply> {
+  if (d.pendingSpec) { await setJSON(draftKey(ctx), d, 1800); return { text: specCard(d.pendingSpec), forceReply: true }; }
   const step = nextStep(d);
   if (step) { await setJSON(draftKey(ctx), d, 1800); return { text: step.ask, forceReply: true }; }
   await del(draftKey(ctx));
-  return finishCreate(ctx, d as Required<Draft>);
+  return finishCreate(ctx, d as Required<Pick<Draft, "amount" | "currency" | "recipient" | "recipientEmail" | "recipientCountry" | "specification" | "payerEmail">> & Draft);
 }
 
 /** Free text answer while a draft is open. */
 export async function answerDraft(ctx: Ctx, text: string): Promise<Reply> {
   const d = (await getJSON<Draft>(draftKey(ctx))) ?? {};
-  const step = nextStep(d);
-  if (!step) return continueDraft(ctx, d);
   const t = text.trim();
   if (/^(cancel|stop)$/i.test(t)) { await del(draftKey(ctx)); return { text: "Escrow setup cancelled." }; }
+  if (d.pendingSpec) {
+    if (/^(yes|y|confirm|ok)$/i.test(t)) { d.structuredSpec = d.pendingSpec; d.specification = specToText(d.pendingSpec).slice(0, 2000) || d.specification; }
+    else { if (t.length < 5) return { text: "Please type the spec, or reply YES to use the extracted one.", forceReply: true }; d.specification = t.slice(0, 2000); d.structuredSpec = undefined; }
+    delete d.pendingSpec;
+    return continueDraft(ctx, d);
+  }
+  const step = nextStep(d);
+  if (!step) return continueDraft(ctx, d);
   switch (step.field) {
     case "amount": {
       const m = /^(\d+(?:[.,]\d{1,2})?)\s*([A-Za-z]{3})$/.exec(t);
@@ -155,8 +186,8 @@ export async function answerDraft(ctx: Ctx, text: string): Promise<Reply> {
 
 export async function createFromFields(ctx: Ctx, d: Draft): Promise<Reply> { return continueDraft(ctx, d); }
 
-async function finishCreate(ctx: Ctx, d: Required<Draft>): Promise<Reply> {
-  const escrow = await createEscrow({ payer: ctx.userName.slice(0, 80), payerEmail: d.payerEmail, recipient: d.recipient, recipientEmail: d.recipientEmail, recipientCountry: d.recipientCountry, amount: d.amount, currency: d.currency, specification: d.specification });
+async function finishCreate(ctx: Ctx, d: Required<Pick<Draft, "amount" | "currency" | "recipient" | "recipientEmail" | "recipientCountry" | "specification" | "payerEmail">> & Draft): Promise<Reply> {
+  const escrow = await createEscrow({ payer: ctx.userName.slice(0, 80), payerEmail: d.payerEmail, recipient: d.recipient, recipientEmail: d.recipientEmail, recipientCountry: d.recipientCountry, amount: d.amount, currency: d.currency, specification: d.specification, structuredSpec: d.structuredSpec, acceptanceCriteria: d.structuredSpec?.acceptanceCriteria, specDocument: d.specDocument });
   await bindRole(escrow.id, "payer", ctx);
   await linkChat(ctx, escrow.id);
   await logActivity({ platform: ctx.platform, chatId: ctx.chatId, userId: ctx.userId, action: "create", escrowId: escrow.id, ok: true });
@@ -248,6 +279,12 @@ async function guard(ctx: Ctx, escrow: EscrowRecord, action: string): Promise<Re
 }
 
 // ---------- fund ----------
+const SANDBOX_HINT = [
+  "This is the PayPal SANDBOX: real PayPal logins and real cards don't work, and you can't sign up for a new account there.",
+  process.env.SANDBOX_BUYER_EMAIL && process.env.PAYPAL_ENV !== "live" ? `Log in with the test buyer: ${process.env.SANDBOX_BUYER_EMAIL} (password on the ClearSend help page: ${appUrl()}/paypal/help).` : `Use a sandbox buyer account (see ${appUrl()}/paypal/help).`,
+  "If PayPal offers \"Pay with Debit or Credit Card\", a documented sandbox test card such as Visa 4012 8888 8888 1881 with any future expiry and any 3-digit CVV can work; PayPal decides whether that option is shown.",
+].join("\n");
+
 export async function fund(ctx: Ctx, idArg?: string): Promise<Reply> {
   await botLog(ctx, idArg, "asked to fund the escrow with PayPal");
   const escrow = await resolveEscrow(ctx, idArg);
@@ -270,7 +307,7 @@ export async function fund(ctx: Ctx, idArg?: string): Promise<Reply> {
   return {
     text: `Pay ${money(escrow.amount, escrow.currency)} into escrow ${escrow.id}.\n1) Open the PayPal approval link (sent to you privately) and approve with your sandbox buyer account.\n2) Press "I approved" to capture. Nothing is charged until you approve in PayPal.`,
     buttons: [{ label: "I approved: capture into escrow", id: `c:${nonce}`, style: "success" }],
-    dm: { text: `PayPal sandbox approval for escrow ${escrow.id}: ${money(escrow.amount, escrow.currency)}. PayPal order ${order.orderId}.`, buttons },
+    dm: { text: `PayPal sandbox approval for escrow ${escrow.id}: ${money(escrow.amount, escrow.currency)}. PayPal order ${order.orderId}.\n${SANDBOX_HINT}`, buttons },
   };
 }
 
@@ -403,6 +440,7 @@ async function execute(ctx: Ctx, nonce: string, p: Pending): Promise<Reply> {
     return withReceipt(refunded, "refund", `Refunded ${money(escrow.amount, escrow.currency)} to the payer (PayPal sandbox refund ${r.id}).`);
   } catch (e) {
     await logActivity({ platform: ctx.platform, chatId: ctx.chatId, userId: ctx.userId, action: p.action, escrowId: escrow.id, ok: false, note: errMsg(e) });
+    if (p.action === "capture") return { text: `${captureErrorMessage(e)}\nRun fund again to get a fresh "I approved" button (the same PayPal order is reused until it expires).`, buttons: [{ label: "Fund again", id: `act:fund:${escrow.id}` }] };
     return { text: `${p.action} failed: ${errMsg(e)}` };
   }
 }

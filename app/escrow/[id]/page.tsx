@@ -10,6 +10,8 @@ import type { EscrowRole } from "@/lib/escrow-links";
 import { EscrowDocuments } from "@/components/EscrowDocuments";
 import { Stepper } from "@/components/room/Stepper";
 import { escrowStep } from "@/lib/workflow";
+import { SandboxHelp } from "@/components/SandboxHelp";
+import { SpecView } from "@/components/SpecReview";
 
 export default function EscrowPage() {
   const params = useParams();
@@ -23,6 +25,7 @@ export default function EscrowPage() {
   const [error, setError] = useState<string | null>(null);
   const [deliverable, setDeliverable] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [approveUrl, setApproveUrl] = useState<string | null>(null);
 
   useEffect(() => {
     loadEscrow();
@@ -127,7 +130,8 @@ export default function EscrowPage() {
       const res = await fetch(`/api/escrow/fund`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ escrowId: id }) });
       const j = await res.json().catch(() => ({}));
       if (!res.ok || !j.approveUrl) throw new Error(j.error || "PayPal returned no approval link");
-      window.location.href = j.approveUrl;
+      setApproveUrl(j.approveUrl);
+      setIsSubmitting(false);
     } catch (err) {
       alert(err instanceof Error ? err.message : "Failed to start PayPal funding");
       setIsSubmitting(false);
@@ -308,8 +312,10 @@ export default function EscrowPage() {
             <CardTitle>Specification</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
+            {escrow.structuredSpec && <SpecView spec={escrow.structuredSpec} />}
             <div>
-              <p className="text-gray-700">{escrow.specification}</p>
+              {escrow.structuredSpec && <p className="font-medium text-gray-900 mb-1">Specification text</p>}
+              <p className="text-gray-700 whitespace-pre-wrap">{escrow.specification}</p>
             </div>
 
             {escrow.acceptanceCriteria && escrow.acceptanceCriteria.length > 0 && (
@@ -438,9 +444,16 @@ export default function EscrowPage() {
             )}
 
             {role === "payer" && escrow.state === "created" && (
-              <Button onClick={handleFund} disabled={isSubmitting} className="w-full">
-                Fund {escrow.amount.toFixed(2)} {escrow.currency} with PayPal (sandbox)
-              </Button>
+              <div className="space-y-3">
+                <SandboxHelp />
+                {approveUrl ? (
+                  <a href={approveUrl} className="block w-full rounded-md bg-[#ffc439] px-4 py-2 text-center font-bold text-[#003087]">Continue to PayPal sandbox checkout</a>
+                ) : (
+                  <Button onClick={handleFund} disabled={isSubmitting} className="w-full">
+                    Fund {escrow.amount.toFixed(2)} {escrow.currency} with PayPal (sandbox)
+                  </Button>
+                )}
+              </div>
             )}
             {role === "payer" && escrow.state === "verified" && (
               <Button 

@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { Stepper } from "@/components/room/Stepper";
 import { useToast } from "@/components/room/Toaster";
+import { SandboxHelp } from "@/components/SandboxHelp";
 import { Badge, Card, cx, ErrorBox, Eyebrow, Money, PageHeader, Row, SandboxNote, Skeleton } from "@/components/room/ui";
 
 type Offer = { id: string; provider: string; airline: string; airlineCode?: string; route: string; origin: string; destination: string; depart: string; arrive: string; stops: number; duration?: string; price: number | null; currency: string; isCheapest?: boolean; scheduleOnly?: boolean };
@@ -158,6 +159,7 @@ export default function PlanTrip() {
               </button>
               <p className="text-xs text-mut">After you approve in PayPal you return to ClearSend and type CAPTURE to take the payment.</p>
               <SandboxNote />
+              <SandboxHelp compact />
             </div>
           </Card>
         </div>

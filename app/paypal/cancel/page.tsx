@@ -1,3 +1,4 @@
+import { SandboxHelp } from "@/components/SandboxHelp";
 import { ButtonLink, Card, PageHeader, Room, SandboxNote } from "@/components/room/ui";
 
 export default async function Cancel({ searchParams }: { searchParams: Promise<{ kind?: string; id?: string }> }) {
@@ -8,9 +9,11 @@ export default async function Cancel({ searchParams }: { searchParams: Promise<{
       <Card className="max-w-xl space-y-4">
         {id && <p className="text-sm">Record: <code>{id}</code> ({kind})</p>}
         <div className="flex flex-wrap gap-2">
-          {kind === "trip" ? <ButtonLink href="/plan">Back to Plan a trip</ButtonLink> : kind === "escrow" ? <ButtonLink href="/escrow">Back to escrows</ButtonLink> : <ButtonLink href="/agent">Back to the agent</ButtonLink>}
+          {kind === "trip" ? <ButtonLink href="/plan">Retry payment</ButtonLink> : kind === "escrow" ? <ButtonLink href="/escrow">Retry funding (open your saved payer link)</ButtonLink> : <ButtonLink href="/agent">Back to the agent</ButtonLink>}
           <ButtonLink href="/" variant="ghost">Room</ButtonLink>
         </div>
+        <p className="text-sm">Couldn&apos;t log in? That&apos;s expected with a real account: the sandbox only accepts test logins or test cards.</p>
+        <SandboxHelp />
         <SandboxNote />
       </Card>
     </Room>

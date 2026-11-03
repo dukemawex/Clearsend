@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useToast } from "@/components/room/Toaster";
 import { ButtonLink, Card, ErrorBox, PageHeader, Row, SandboxNote } from "@/components/room/ui";
 import { payerLink } from "@/lib/creds";
+import { SandboxHelp } from "@/components/SandboxHelp";
 
 // PayPal sends the payer back here with ?token=<orderId>&PayerID=. The URL carries no role or trip token.
 // Capture is a money move, so it still needs the payer to type CAPTURE.
@@ -50,7 +51,7 @@ export default function ReturnClient() {
             <label className="block text-sm font-semibold" htmlFor="cap">Type <code>CAPTURE</code> to take the payment</label>
             <input id="cap" className="cs-field" value={typed} onChange={(e) => setTyped(e.target.value)} autoComplete="off" />
             <button onClick={capture} disabled={busy || typed.trim() !== "CAPTURE"} className="btn-paypal w-full rounded-full px-6 py-3 font-bold disabled:opacity-50">{busy ? "Capturing…" : "Capture with PayPal (sandbox)"}</button>
-            {err && <ErrorBox>{err}</ErrorBox>}
+            {err && <><ErrorBox>{err}</ErrorBox><div className="flex flex-wrap gap-2"><button onClick={capture} disabled={busy} className="btn-ghost rounded-full px-4 py-2 text-sm font-bold">Retry capture</button>{kind === "escrow" && id && <ButtonLink href={roleUrl ?? "/escrow"} variant="ghost">Start funding again</ButtonLink>}</div><SandboxHelp compact /></>}
           </div>
         )}
         <SandboxNote />

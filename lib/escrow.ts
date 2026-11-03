@@ -1,5 +1,6 @@
 import { recordActivity } from "./activity";
 import { z } from "zod";
+import { StructuredSpec } from "./spec";
 import { Receipt, buildReceipt, fxAtEvent, type ReceiptKind } from "./receipts";
 
 export const EscrowState = z.enum(["created", "funded", "submitted", "verified", "rejected", "released", "refunded"]);
@@ -18,6 +19,7 @@ export const EscrowRecord = z.object({
   currency: z.string().length(3),
   specification: z.string(),
   acceptanceCriteria: z.array(z.string()).optional(),
+  structuredSpec: StructuredSpec.optional(),
   orderId: z.string().optional(),
   captureId: z.string().optional(),
   payoutBatchId: z.string().optional(),
@@ -151,6 +153,8 @@ export async function createEscrow(input: {
   currency: string;
   specification: string;
   acceptanceCriteria?: string[];
+  structuredSpec?: StructuredSpec;
+  specDocument?: { name: string; kind: string; size: number; text: string; truncated: boolean; method: string; note?: string; uploadedAt: number };
 }): Promise<EscrowRecord> {
   const id = `escrow_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
   const now = Date.now();
@@ -168,6 +172,8 @@ export async function createEscrow(input: {
     currency: input.currency,
     specification: input.specification,
     acceptanceCriteria: input.acceptanceCriteria,
+    structuredSpec: input.structuredSpec,
+    documents: input.specDocument ? [{ role: "spec", ...input.specDocument }] : undefined,
     createdAt: now,
     timeline: [{ state: "created", timestamp: now }],
   };

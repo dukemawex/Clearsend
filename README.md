@@ -109,6 +109,19 @@ ClearSend's home page (`/`) is the **Room**: a live activity feed, a 9-step work
 - **Verifier:** `/api/escrow/verify` fences spec and deliverable text as untrusted, tells the model to flag injection attempts, and rejects deliverables with no readable text.
 - **Extraction:** `unpdf` for PDFs (text layer only, scans give no text), `mammoth` for DOCX, UTF-8 for TXT, `tesseract.js` OCR for images. OCR downloads its language data at runtime; if that fails on the serverless function the UI says so and asks for a text format.
 
+## Paying in the PayPal sandbox (judges and testers)
+
+ClearSend uses PayPal's **sandbox**, so the checkout only accepts sandbox test accounts or sandbox test cards. Real PayPal logins and real cards fail, and there is no public sign-up inside the sandbox. ClearSend shows a "Sandbox test payment" panel before redirecting, on `/paypal/return`, `/paypal/cancel` and at `/paypal/help`, and the Telegram approval DM carries the same hint.
+
+- **Test buyer login:** set `SANDBOX_BUYER_EMAIL` and `SANDBOX_BUYER_PASSWORD` (a throwaway sandbox Personal account) in Vercel. They are shown with copy buttons only while `PAYPAL_ENV` is unset or `sandbox`.
+- **Create a sandbox buyer:** log in at <https://developer.paypal.com/dashboard/accounts>, click **Create account**, choose **Personal**, pick a country, then open the account's ⋮ menu → **View/Edit account** to read or set its email and password.
+- **Guest card:** orders are created with `payment_source.paypal.experience_context` (`landing_page: GUEST_CHECKOUT`, `user_action: PAY_NOW`, `shipping_preference: NO_SHIPPING`). Where PayPal shows "Pay with Debit or Credit Card", a documented sandbox test card such as Visa `4012 8888 8888 1881` with any future expiry and CVV can be tried ([card testing docs](https://developer.paypal.com/tools/sandbox/card-testing/)). PayPal decides whether the guest option appears. Set `PAYPAL_EXPERIENCE=legacy` to revert to `application_context`.
+- **Resilience:** cancelling returns to `/paypal/cancel` with a retry link; capture errors (`ORDER_NOT_APPROVED`, `INSTRUMENT_DECLINED`, expired orders) are mapped to clear next steps with Retry capture / Start funding again.
+
+## AI spec extraction from documents
+
+`POST /api/spec/extract` (multipart `file`, or JSON `{name,text}`; zod-validated; 8 requests/min per IP) reads the document and asks the free OpenRouter model (`OPENROUTER_MODEL`, then `OPENROUTER_FALLBACK_MODELS`, default `google/gemma-4-31b-it:free,nvidia/nemotron-3.5-lightning:free`) for a structured spec: title, summary, deliverables, measurable acceptance criteria, deadline, amount/currency/recipient if stated, and ambiguities. The document is fenced as untrusted data; injected instructions are flagged and never become criteria; vague documents return `clearSpec: false` with what is missing. The payer reviews and edits it ("Here is what I understood: confirm or edit") before the escrow is created on `/escrow/new`, from the agent chat ("Use as escrow spec" on an attachment) or in Telegram (send the document during `/escrow`). The confirmed spec is stored as `structuredSpec`, shown on every role page and given to the verifier with the original document text.
+
 ## Payment receipts
 
 Every real PayPal sandbox event issues a receipt, persisted on the escrow or trip record at that moment (`receipts[]`): funding capture, release payout and refund (trips: payment capture and auto-refund). Fields: receipt number, escrow/trip id, time in UTC and Lagos (WAT), payer, recipient, amount, currency, fee (2.5% escrow; trips use their stored 3% service fee), live FX mid-market rate, 1.2% spread and destination amount (quote at event time, when the recipient country maps to a currency), PayPal order id, capture id, payout batch/item id or refund id, PayPal status, and the label "PayPal Sandbox - test payment, no real money". Nothing is seeded.
