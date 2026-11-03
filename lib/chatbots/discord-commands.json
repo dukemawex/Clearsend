@@ -1,0 +1,204 @@
+[
+  {
+    "name": "escrow",
+    "description": "ClearSend escrow with PayPal (sandbox) and an AI verifier",
+    "type": 1,
+    "options": [
+      {
+        "type": 1,
+        "name": "help",
+        "description": "How the escrow bot works"
+      },
+      {
+        "type": 1,
+        "name": "create",
+        "description": "Create an escrow; you become the payer",
+        "options": [
+          {
+            "type": 10,
+            "name": "amount",
+            "description": "Amount, e.g. 150",
+            "required": true,
+            "min_value": 1,
+            "max_value": 100000
+          },
+          {
+            "type": 3,
+            "name": "currency",
+            "description": "3-letter currency, e.g. USD",
+            "required": true,
+            "min_length": 3,
+            "max_length": 3
+          },
+          {
+            "type": 3,
+            "name": "recipient",
+            "description": "Recipient name",
+            "required": true,
+            "max_length": 80
+          },
+          {
+            "type": 3,
+            "name": "recipient_email",
+            "description": "Recipient PayPal (sandbox) email for payout",
+            "required": true
+          },
+          {
+            "type": 3,
+            "name": "country",
+            "description": "Recipient country, e.g. NG",
+            "required": true,
+            "max_length": 40
+          },
+          {
+            "type": 3,
+            "name": "spec",
+            "description": "What must be delivered (checked by the AI verifier)",
+            "required": true,
+            "max_length": 2000
+          },
+          {
+            "type": 3,
+            "name": "payer_email",
+            "description": "Your PayPal (sandbox) email",
+            "required": true
+          }
+        ]
+      },
+      {
+        "type": 1,
+        "name": "join",
+        "description": "Join an escrow with an invite code or role link",
+        "options": [
+          {
+            "type": 3,
+            "name": "code",
+            "description": "Invite code or role link",
+            "required": true
+          }
+        ]
+      },
+      {
+        "type": 1,
+        "name": "status",
+        "description": "Show escrow status",
+        "options": [
+          {
+            "type": 3,
+            "name": "id",
+            "description": "Escrow id (defaults to this channel's escrow)",
+            "required": false
+          }
+        ]
+      },
+      {
+        "type": 1,
+        "name": "fund",
+        "description": "Payer: pay into escrow with PayPal",
+        "options": [
+          {
+            "type": 3,
+            "name": "id",
+            "description": "Escrow id (defaults to this channel's escrow)",
+            "required": false
+          }
+        ]
+      },
+      {
+        "type": 1,
+        "name": "verify",
+        "description": "Run the AI verifier on the submitted work",
+        "options": [
+          {
+            "type": 3,
+            "name": "id",
+            "description": "Escrow id (defaults to this channel's escrow)",
+            "required": false
+          }
+        ]
+      },
+      {
+        "type": 1,
+        "name": "release",
+        "description": "Payer: release payout (after verification)",
+        "options": [
+          {
+            "type": 3,
+            "name": "id",
+            "description": "Escrow id (defaults to this channel's escrow)",
+            "required": false
+          }
+        ]
+      },
+      {
+        "type": 1,
+        "name": "refund",
+        "description": "Refund the payer",
+        "options": [
+          {
+            "type": 3,
+            "name": "id",
+            "description": "Escrow id (defaults to this channel's escrow)",
+            "required": false
+          }
+        ]
+      },
+      {
+        "type": 1,
+        "name": "submit",
+        "description": "Recipient: submit the deliverable",
+        "options": [
+          {
+            "type": 3,
+            "name": "text",
+            "description": "Describe the deliverable",
+            "required": false,
+            "max_length": 2000
+          },
+          {
+            "type": 11,
+            "name": "file",
+            "description": "PDF, DOCX, TXT/MD or image (max 5 MB)",
+            "required": false
+          },
+          {
+            "type": 3,
+            "name": "id",
+            "description": "Escrow id (defaults to this channel's escrow)",
+            "required": false
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "quote",
+    "description": "Live FX quote with ClearSend fees",
+    "type": 1,
+    "options": [
+      {
+        "type": 10,
+        "name": "amount",
+        "description": "Amount",
+        "required": true,
+        "min_value": 0.01
+      },
+      {
+        "type": 3,
+        "name": "from",
+        "description": "From currency, e.g. USD",
+        "required": true,
+        "min_length": 3,
+        "max_length": 3
+      },
+      {
+        "type": 3,
+        "name": "to",
+        "description": "To currency, e.g. NGN",
+        "required": true,
+        "min_length": 3,
+        "max_length": 3
+      }
+    ]
+  }
+]

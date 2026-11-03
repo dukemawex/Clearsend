@@ -88,6 +88,39 @@ Open http://localhost:3000 and try a golden prompt. The agent should:
 - **Verifier:** `/api/escrow/verify` fences spec and deliverable text as untrusted, tells the model to flag injection attempts, and rejects deliverables with no readable text.
 - **Extraction:** `unpdf` for PDFs (text layer only, scans give no text), `mammoth` for DOCX, UTF-8 for TXT, `tesseract.js` OCR for images. OCR downloads its language data at runtime; if that fails on the serverless function the UI says so and asks for a text format.
 
+## Use ClearSend in Telegram or Discord
+
+Add ClearSend to a Telegram group or a Discord server and run the same PayPal-backed escrow in the conversation. Both bots are serverless: Telegram uses a webhook (`POST /api/telegram/webhook`) and Discord uses HTTP interactions (`POST /api/discord/interactions`). No long-running bot process. Setup steps and add-to-chat links are also on the in-app page `/chat-bots`.
+
+**Flow:** payer creates the escrow (becomes payer) -> recipient/verifier join with an invite code or their ClearSend role link (roles bound to the chat user id) -> payer funds via a PayPal sandbox approval link (sent privately) and presses "I approved" to capture -> recipient submits text or a file (PDF/DOCX/TXT/image, read by `lib/documents.ts`) -> AI verifier (`lib/verifier.ts`, free OpenRouter/NVIDIA model, documents treated as untrusted) -> payer presses **Confirm release** and types exactly `RELEASE <amount> <CUR>` -> PayPal Payout. Refund (payer or verifier) needs `REFUND <amount> <CUR>`.
+
+**Guards:** release only by the payer and only when the escrow is `verified`; the role is re-checked when money moves; confirmations expire after 10 minutes and run once; per-user rate limit (20/min); Telegram `update_id` and Discord interaction id idempotency; activity log at `clearsend:chat:activity`; all mappings in Upstash under `clearsend:chat:`; PayPal sandbox only; tokens never logged.
+
+### Telegram (BotFather)
+1. Message **@BotFather** -> `/newbot` -> pick a name and a username ending in `bot`. Copy the token.
+2. Optional: `/setjoingroups` -> Enable. Leave `/setprivacy` **Enabled**: the bot only needs commands and replies to its own prompts (guided steps use force-reply).
+3. Vercel env (Production + Preview): `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET` (random, `A-Z a-z 0-9 _ -`, e.g. `openssl rand -hex 32`), `NEXT_PUBLIC_TELEGRAM_BOT_USERNAME` (without @). Redeploy.
+4. Register the webhook and command menu:
+   ```bash
+   TELEGRAM_BOT_TOKEN=... TELEGRAM_WEBHOOK_SECRET=... node scripts/telegram-set-webhook.mjs https://clearsend-sigma.vercel.app
+   ```
+5. Add the bot to a group with `https://t.me/<bot>?startgroup=true`. Commands: `/escrow`, `/escrow 150 USD to Ada <ada@example.com> for 3 logo concepts`, `/join <code>`, `/status`, `/fund`, `/submit` (text, or reply to a document/photo), `/verify`, `/release`, `/refund`, `/quote 100 USD NGN`, `/cancel`, `/help`. Invite links `https://t.me/<bot>?start=<code>` join from a DM. Each party should press Start in a DM once so private links (PayPal approval, role link) can be delivered; otherwise the PayPal approval link falls back to the group.
+
+### Discord (Developer Portal)
+1. https://discord.com/developers/applications -> **New Application**. General Information: copy **Application ID** and **Public Key**.
+2. **Bot** tab -> Reset Token -> copy the **bot token** (only used by the command registration script). No privileged gateway intents are needed (no Message Content, Members or Presence).
+3. Vercel env: `DISCORD_APP_ID`, `NEXT_PUBLIC_DISCORD_APP_ID` (same value), `DISCORD_PUBLIC_KEY`, `DISCORD_BOT_TOKEN`. Redeploy.
+4. General Information -> **Interactions Endpoint URL**: `https://clearsend-sigma.vercel.app/api/discord/interactions` -> Save. Discord sends a signed PING; the route verifies Ed25519 and answers PONG (bad signatures get 401).
+5. Register slash commands (`/escrow help|create|join|status|fund|submit|verify|release|refund`, `/quote`):
+   ```bash
+   DISCORD_APP_ID=... DISCORD_BOT_TOKEN=... node scripts/discord-register-commands.mjs [guildId]
+   ```
+6. Invite: `https://discord.com/oauth2/authorize?client_id=<APP_ID>&scope=bot%20applications.commands&permissions=2147600384` (Send Messages, Embed Links, Attach Files, Read Message History, Use Application Commands). The script prints it too.
+
+Release/refund on Discord use a button that opens a modal where the typed words are entered. Slow work (AI verify, PayPal calls) uses a deferred response and edits the original message via the interaction webhook.
+
+Tests: `npm test` (Discord signature with a generated Ed25519 keypair, Telegram secret, parsing, role mapping and guards, route 401/PONG).
+
 ## Local development
 
 ```bash
