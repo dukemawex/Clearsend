@@ -173,6 +173,19 @@ Add ClearSend to a Telegram group and run the same PayPal-backed escrow in the c
 
 Tests: `npm test` (Telegram secret, parsing, role mapping and guards, webhook 401, receipt builder).
 
+
+## PayPal webhooks
+
+Webhook URL: `https://clearsend-sigma.vercel.app/api/webhooks/paypal`
+
+1. developer.paypal.com → Apps & Credentials → your sandbox app → Webhooks → Add webhook with the URL above.
+2. Subscribe to: `CHECKOUT.ORDER.APPROVED`, `PAYMENT.CAPTURE.COMPLETED`, `PAYMENT.CAPTURE.DENIED`, `PAYMENT.CAPTURE.PENDING`, `PAYMENT.CAPTURE.REFUNDED`, `PAYMENT.PAYOUTSBATCH.SUCCESS`, `PAYMENT.PAYOUTSBATCH.DENIED`, `PAYMENT.PAYOUTS-ITEM.SUCCEEDED`, `PAYMENT.PAYOUTS-ITEM.FAILED`, `PAYMENT.PAYOUTS-ITEM.BLOCKED`, `PAYMENT.PAYOUTS-ITEM.RETURNED`, `PAYMENT.PAYOUTS-ITEM.UNCLAIMED`, `PAYMENT.PAYOUTS-ITEM.HELD`, `PAYMENT.PAYOUTS-ITEM.REFUNDED`, `PAYMENT.PAYOUTS-ITEM.CANCELED`.
+3. Set `PAYPAL_WEBHOOK_ID` (the Webhook ID PayPal shows) in Vercel Production and Preview.
+
+Every delivery is verified with PayPal's `POST /v1/notifications/verify-webhook-signature` (transmission headers + `PAYPAL_WEBHOOK_ID`; sandbox or live base per `PAYPAL_ENV`). Missing ID, missing headers or a failed check returns 401 (fail closed). Events are deduplicated on event id in Upstash (30 day TTL).
+
+What a webhook may do: confirm funding of a `created` escrow when PayPal reports the capture completed; record a refund PayPal already made; record the latest payout status on a released escrow and its receipt; add activity-feed entries; post a Telegram warning when a payout fails, is returned, unclaimed, held, blocked, refunded or cancelled. What it never does: move an escrow backwards, start a capture, payout or refund, or release funds (release stays human-confirmed). Records are matched via `custom_id` (`escrow:<id>` / `trip:<id>`) on orders, PayPal order/capture ids, payout batch id and `sender_item_id` (escrow id). Trip events are logged to the activity feed only.
+
 ## Local development
 
 ```bash

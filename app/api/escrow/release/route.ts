@@ -48,6 +48,7 @@ export async function POST(request: NextRequest) {
       amount: escrow.amount,
       currency: escrow.currency,
       note: `ClearSend Escrow Release: ${escrow.specification.slice(0, 100)}`,
+      senderItemId: escrow.id,
     });
     
     const batchId = payoutResult.batch_header?.payout_batch_id as string | undefined;

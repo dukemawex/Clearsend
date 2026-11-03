@@ -370,3 +370,18 @@ export function payoutReceiver(e: EscrowRecord): { receiver: string; recipientTy
 }
 
 export async function setPayoutStatus(id: string, payoutStatus: string) { return updateEscrow(id, { payoutStatus }); }
+
+/** Webhook lookup: escrow by id, PayPal order, capture or payout batch. Scans records (small hackathon dataset). */
+export async function findEscrowByPayPal(q: { id?: string; orderId?: string; captureId?: string; payoutBatchId?: string }): Promise<EscrowRecord | null> {
+  if (q.id) { const e = await getEscrow(q.id); if (e) return e; }
+  if (!q.orderId && !q.captureId && !q.payoutBatchId) return null;
+  return (await listAllEscrows()).find((e) => (q.orderId && e.orderId === q.orderId) || (q.captureId && e.captureId === q.captureId) || (q.payoutBatchId && e.payoutBatchId === q.payoutBatchId)) ?? null;
+}
+
+/** Webhook reconcile for payouts: records PayPal's latest payout status on the escrow and its payout receipt. Never changes escrow state. */
+export async function reconcilePayoutStatus(id: string, payoutStatus: string, payoutItemId?: string): Promise<EscrowRecord> {
+  const e = await getEscrow(id);
+  if (!e) throw new EscrowError(`Escrow ${id} not found`, "NOT_FOUND");
+  const receipts = (e.receipts ?? []).map((r) => (r.kind === "payout" ? { ...r, status: payoutStatus } : r));
+  return updateEscrow(id, { payoutStatus, payoutItemId: e.payoutItemId ?? payoutItemId, receipts });
+}

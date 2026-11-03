@@ -440,7 +440,7 @@ async function execute(ctx: Ctx, nonce: string, p: Pending): Promise<Reply> {
     if (p.action === "release") {
       if (escrow.state !== "verified" || !escrow.evaluationResult?.met) return { text: `Escrow is ${escrow.state}; release needs AI verification.` };
       const rcv = payoutReceiver(escrow); if (!rcv) return { text: "No recipient PayPal email/phone/ID on this escrow." };
-      const payout = await createPayout({ ...rcv, amount: escrow.amount, currency: escrow.currency, note: `ClearSend Escrow Release: ${escrow.specification.slice(0, 100)}` });
+      const payout = await createPayout({ ...rcv, amount: escrow.amount, currency: escrow.currency, note: `ClearSend Escrow Release: ${escrow.specification.slice(0, 100)}`, senderItemId: escrow.id });
       const batchId = payout.batch_header?.payout_batch_id as string | undefined;
       if (!batchId) throw new Error("PayPal returned no payout batch id");
       const released = await releaseEscrow(escrow.id, batchId, payout.items?.[0]?.payout_item_id, payout.batch_header?.batch_status);

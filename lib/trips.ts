@@ -347,3 +347,10 @@ function tripReceipt(t: TripRecord, kind: ReceiptKind, status: string) {
     status,
   });
 }
+
+/** Webhook lookup: trip by id, PayPal order or capture. */
+export async function findTripByPayPal(q: { id?: string; orderId?: string; captureId?: string }): Promise<TripRecord | null> {
+  if (q.id) { const t = await getTrip(q.id); if (t) return t; }
+  if (!q.orderId && !q.captureId) return null;
+  return (await listAllTrips()).find((t) => (q.orderId && t.paypalOrderId === q.orderId) || (q.captureId && t.paypalCaptureId === q.captureId)) ?? null;
+}
