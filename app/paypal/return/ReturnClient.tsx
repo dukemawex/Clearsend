@@ -7,6 +7,12 @@ import { payerLink } from "@/lib/creds";
 
 // PayPal sends the payer back here with ?token=<orderId>&PayerID=. The URL carries no role or trip token.
 // Capture is a money move, so it still needs the payer to type CAPTURE.
+// The fund API needs the payer token (from the payer link saved on this device) or the creator's own browser cookie.
+function payerCred(url: string | null): { role?: string; token?: string } {
+  if (!url) return {};
+  try { const u = new URL(url, "http://x"); const token = u.searchParams.get("token"); return token ? { role: "payer", token } : {}; } catch { return {}; }
+}
+
 export default function ReturnClient() {
   const sp = useSearchParams();
   const kind = sp.get("kind") ?? "order";
@@ -24,7 +30,7 @@ export default function ReturnClient() {
     setBusy(true); setErr(null);
     try {
       const res = kind === "escrow"
-        ? await fetch("/api/escrow/fund", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ escrowId: id, orderId }) })
+        ? await fetch("/api/escrow/fund", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ escrowId: id, orderId, ...payerCred(roleUrl) }) })
         : await fetch(`/api/trips/${encodeURIComponent(id)}/book`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ orderId }) });
       const j = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(j.error ?? `HTTP ${res.status}`);

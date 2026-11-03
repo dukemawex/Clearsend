@@ -30,10 +30,11 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
       const token = searchParams.get("token");
       
       if (!role || !token) {
-        return NextResponse.json({ error: "Missing role or token" }, { status: 401 });
-      }
-      
-      if (!verifyEscrowToken(id, role, token)) {
+        // The creator's own browser (cs_uid == ownerId) may open its escrow as the payer without a token.
+        const own = ownerFromRequest(request);
+        const rec = own ? await getEscrow(id) : null;
+        if (!rec || !rec.ownerId || rec.ownerId !== own) return NextResponse.json({ error: "Missing role or token" }, { status: 401 });
+      } else if (!verifyEscrowToken(id, role, token)) {
         return NextResponse.json({ error: "Invalid token for this role" }, { status: 403 });
       }
     }
