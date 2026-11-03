@@ -75,8 +75,10 @@ export function roleAllowed(action: string, role: Role | null): boolean {
   }
 }
 
-export function quoteBreakdown(amount: number, rate: number) {
+export function quoteBreakdown(amount: number, rate: number, from?: string, to?: string) {
   const fee = amount * 0.025;
-  const customerRate = rate * (1 - 0.012);
-  return { fee: Math.round(fee * 100) / 100, customerRate, receive: Math.round((amount - fee) * customerRate * 100) / 100 };
+  const same = !!from && !!to && from.toUpperCase() === to.toUpperCase();
+  const spreadPercent = same ? 0 : 1.2;
+  const customerRate = same ? 1 : rate * (1 - spreadPercent / 100);
+  return { fee: Math.round(fee * 100) / 100, customerRate, spreadPercent, receive: Math.round((amount - fee) * customerRate * 100) / 100 };
 }

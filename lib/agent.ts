@@ -110,9 +110,10 @@ export const agentTools = {
     }), 
     execute: async ({ amount, sourceCurrency, destinationCurrency, destination }) => { 
       try { 
-        const { rate: midMarketRate, source } = await getMidMarketRate(sourceCurrency, destinationCurrency); 
+        const same = sourceCurrency.toUpperCase() === destinationCurrency.toUpperCase();
+        const { rate: midMarketRate, source } = same ? { rate: 1, source: "same currency" } : await getMidMarketRate(sourceCurrency, destinationCurrency); 
         const fee = amount * 0.025; 
-        const fxRate = midMarketRate * 0.988; 
+        const fxRate = same ? 1 : midMarketRate * 0.988; 
         const totalCharged = amount;
         const receiveAmount = (amount - fee) * fxRate;
         

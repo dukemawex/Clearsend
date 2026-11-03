@@ -18,7 +18,7 @@ export function SandboxHelp({ compact = false }: { compact?: boolean }) {
       <p className="font-bold text-blue-900">🧪 Sandbox test payment: no real money</p>
       <p className="mt-1">PayPal will open its <b>sandbox</b> checkout. Your real PayPal login and real cards will not work there, and the sandbox has no public sign-up. Use one of these:</p>
       <ol className="mt-2 list-decimal space-y-2 pl-5">
-        <li><b>Log in with a sandbox buyer account.</b>{h?.buyer ? (
+        <li><b>Log in with a sandbox buyer account.</b>{!h ? null : h.buyer ? (
           <div className="mt-1 space-y-1 rounded-xl bg-white p-2 font-mono text-xs">
             <div>Email: {h.buyer.email}<Copy value={h.buyer.email} label="sandbox email" /></div>
             <div>Password: {h.buyer.password}<Copy value={h.buyer.password} label="sandbox password" /></div>
