@@ -82,9 +82,13 @@ export async function extractSpec(name: string, text: string): Promise<{ spec: S
   const list = candidates();
   if (!list.length) throw new Error("No AI provider configured (OPENROUTER_API_KEY).");
   let last: unknown;
+  // Stay inside the 60s function limit: overall budget 54s, each model gets at most 28s of it.
+  const deadline = Date.now() + 54_000;
   for (const c of list) {
+    const left = deadline - Date.now();
+    if (left < 5_000) break;
     try {
-      const r = await generateText({ model: c.model, system: SPEC_SYSTEM, prompt: buildSpecPrompt(name, text.slice(0, 20_000)), maxOutputTokens: 1500, temperature: 0, abortSignal: AbortSignal.timeout(45_000) });
+      const r = await generateText({ model: c.model, system: SPEC_SYSTEM, prompt: buildSpecPrompt(name, text.slice(0, 20_000)), maxOutputTokens: 1500, temperature: 0, abortSignal: AbortSignal.timeout(Math.min(28_000, left)) });
       return { spec: parseSpecResponse(r.text, text), model: c.name };
     } catch (e) { last = e; console.warn("spec_extract_model_failed", c.name, e instanceof Error ? e.message.slice(0, 200) : e); }
   }
