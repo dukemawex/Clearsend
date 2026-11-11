@@ -77,7 +77,7 @@ export default function PlanTrip() {
       </Card>
 
       {error && <ErrorBox>{error}</ErrorBox>}
-      {loading === "search" && <div className="space-y-3" aria-busy><p className="text-sm text-mut">Querying Sky-Scrapper, Duffel and open data. This can take up to a minute when a provider rate-limits.</p>{[0, 1, 2].map((i) => <Skeleton key={i} className="h-24" />)}</div>}
+      {loading === "search" && <div className="space-y-3" aria-busy><p className="text-sm text-mut">Querying live Google Flights fares via Kernel, plus Duffel test offers. This can take up to a minute when a provider is slow.</p>{[0, 1, 2].map((i) => <Skeleton key={i} className="h-24" />)}</div>}
 
       {search && !trip && !chosen && (
         <section className="space-y-4">
