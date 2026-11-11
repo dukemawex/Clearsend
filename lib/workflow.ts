@@ -1,6 +1,6 @@
 // The one workflow everyone follows, shared by the Room home, /plan and role views.
 export const WORKFLOW = [
-  { key: "search", label: "Search flights", hint: "Sky-Scrapper, Duffel, open data" },
+  { key: "search", label: "Search flights", hint: "Kernel on Google Flights, Duffel test booking" },
   { key: "choose", label: "Choose", hint: "Agent asks which flight" },
   { key: "confirm", label: "Confirm", hint: "Traveller + typed yes" },
   { key: "pay", label: "Pay with PayPal", hint: "Sandbox approve + capture" },
